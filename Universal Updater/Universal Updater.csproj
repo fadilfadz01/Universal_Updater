@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netcoreapp2.1</TargetFramework>
+    <RootNamespace>Universal_Updater</RootNamespace>
+    <Version>2.5.0.0</Version>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <Company>Fadil Fadz</Company>
+    <Copyright>Copyright ©  2021 - 2022</Copyright>
+    <Product />
+    <Authors> </Authors>
+    <Description>Console based unofficial updater for Windows 10 Mobile.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="Resources\getdulogs.exe" />
+    <None Remove="Resources\iutool.exe" />
+    <None Remove="Resources\wget.exe" />
+    <None Remove="Updates\13016.108.txt" />
+    <None Remove="Updates\13037.0.txt" />
+    <None Remove="Updates\13080.107.txt" />
+    <None Remove="Updates\14393.1066.txt" />
+    <None Remove="Updates\15063.297.txt" />
+    <None Remove="Updates\15254.603.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\getdulogs.exe" />
+    <EmbeddedResource Include="Resources\iutool.exe" />
+    <EmbeddedResource Include="Resources\wget.exe" />
+    <EmbeddedResource Include="Updates\13016.108.txt" />
+    <EmbeddedResource Include="Updates\13037.0.txt" />
+    <EmbeddedResource Include="Updates\13080.107.txt" />
+    <EmbeddedResource Include="Updates\14393.1066.txt" />
+    <EmbeddedResource Include="Updates\15063.297.txt" />
+    <EmbeddedResource Include="Updates\15254.603.txt" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+  </ItemGroup>
+
+</Project>
