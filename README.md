@@ -1,5 +1,5 @@
 # Universal Updater
-Console based unofficial semi-offline updater for Windows Phone.
+Console based unofficial updater for Windows Phone.
 
 
 ### Available Updates
@@ -9,20 +9,16 @@ Console based unofficial semi-offline updater for Windows Phone.
 * 10.0.14393.1066
 * 10.0.15063.297
 * 10.0.15254.603
-* 10.0.16212.1000
 * Offline package update
 
 
-### Guides
-* Build 10.0.10549.4 & 10.0.10570.0 installation: https://www.youtube.com/watch?v=vP-z8jVXVBQ
-* Build 10.0.16212.1000 installation: https://github.com/Empyreal96/W10M-16212-Guides/wiki/Update-using-Universal-Updater
+### Tutorial
+  Build 10.0.10549.4 & 10.0.10570.0 installation:</br>
+[![Universal Updater for all Windows Phone devices](https://img.youtube.com/vi/pFM27v2jCHk/0.jpg)](https://www.youtube.com/watch?v=vP-z8jVXVBQ)
 
 
 ### Screenshots
-![Screenshot (10)](https://user-images.githubusercontent.com/66063294/133218105-77012fbb-0cf0-482d-a44d-13aaaae4004b.png)
-<br/>
-<br/>
-![Screenshot (8)](https://user-images.githubusercontent.com/66063294/133218120-eb180e3f-cf89-4dd2-9368-01d44a1824ff.png)
+![Screenshot](https://user-images.githubusercontent.com/66063294/133218120-eb180e3f-cf89-4dd2-9368-01d44a1824ff.png)
 
 
 ### Thanks
