@@ -83,18 +83,7 @@ namespace Universal_Updater
                         }
                         else if (int.Parse(targetNumberArray[3]) == int.Parse(currentNumberArray[3]))
                         {
-                            if(int.Parse(targetNumberArray[4]) < int.Parse(currentNumberArray[4]))
-                            {
-                                result = "gtr";
-                            }
-                            else if (int.Parse(targetNumberArray[4]) == int.Parse(currentNumberArray[4]))
-                            {
-                                result = "equ";
-                            }
-                            else
-                            {
-                                result = "lss";
-                            }
+                            result = "equ";
                         }
                         else
                         {
