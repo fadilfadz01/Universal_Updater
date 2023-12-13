@@ -75,7 +75,7 @@ namespace Universal_Updater
                     {
                         result = "gtr";
                     }
-                    else if(int.Parse(targetNumberArray[2]) == int.Parse(currentNumberArray[2]))
+                    else if (int.Parse(targetNumberArray[2]) == int.Parse(currentNumberArray[2]))
                     {
                         if (int.Parse(targetNumberArray[3]) < int.Parse(currentNumberArray[3]))
                         {

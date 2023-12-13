@@ -27,6 +27,7 @@ namespace Universal_Updater
             getDeviceInfoProcess.StartInfo.RedirectStandardOutput = true;
             getDeviceInfoProcess.StartInfo.RedirectStandardError = true;
             getDeviceInfoProcess.StartInfo.RedirectStandardInput = true;
+            getDeviceInfoProcess.StartInfo.UseShellExecute = false;
             getDeviceInfoProcess.Start();
             getDeviceInfoProcess.WaitForExit();
             return getDeviceInfoProcess.ExitCode;
@@ -40,7 +41,16 @@ namespace Universal_Updater
             string logOutput = await getDeviceInfoProcess.StandardOutput.ReadToEndAsync();
             File.WriteAllText(@"C:\ProgramData\Universal Updater\DeviceInfo.txt", logOutput);
             CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "OEMDevicePlatform.xml", @"C:\ProgramData\Universal Updater\OEMDevicePlatform.xml");
-            CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "UsoTroubleshooting.reg", @"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg");
+            try
+            {
+                CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "UsoTroubleshooting.reg", @"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg");
+            }
+            catch (FileNotFoundException) { }
+            try
+            {
+                CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "DuTroubleshooting.reg", @"C:\ProgramData\Universal Updater\DuTroubleshooting.reg");
+            }
+            catch (FileNotFoundException) { }
             CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "InstalledPackages.csv", @"C:\ProgramData\Universal Updater\InstalledPackages.csv");
             CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "OEMInput.xml", @"C:\ProgramData\Universal Updater\OEMInput.xml");
             deviceInfo = new string[deviceDetails.Length + 4];
@@ -53,12 +63,28 @@ namespace Universal_Updater
             {
                 if (i == 6)
                 {
-                    OSVersion = File.ReadAllLines(@"C:\ProgramData\Universal Updater\InstalledPackages.csv").Where(k => k.Contains("Microsoft.DEVICELAYOUT_QC")).ToArray();
+                    try
+                    {
+                        OSVersion = File.ReadAllLines(@"C:\ProgramData\Universal Updater\InstalledPackages.csv").Where(k => k.Contains("Microsoft.DEVICELAYOUT_QC")).ToArray();
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        return null;
+                    }
                     deviceInfo[i + j] = "OSVersion: " + OSVersion[0].Split(',')[2];
                     j++;
                 }
-                var details = File.ReadAllLines(@"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg").Where(l => l.Contains(deviceDetails[i])).ToArray();
-                deviceInfo[i + j] = details[0].Replace("    ", null).Replace("\"", null).Replace("=", ": ").Replace("Phone", null);
+                string[] details = null;
+                if (File.Exists(@"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg")) details = File.ReadAllLines(@"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg").Where(l => l.Contains(deviceDetails[i])).ToArray();
+                else if (File.Exists(@"C:\ProgramData\Universal Updater\DuTroubleshooting.reg")) details = File.ReadAllLines(@"C:\ProgramData\Universal Updater\DuTroubleshooting.reg").Where(l => l.Contains(deviceDetails[i])).ToArray(); ;
+                if (details.Count() > 0)
+                {
+                    deviceInfo[i + j] = details[0].Replace("    ", null).Replace("\"", null).Replace("=", ": ").Replace("Phone", null);
+                }
+                else
+                {
+                    deviceInfo[i + j] = deviceDetails[i].Replace("Phone", "") + ": ";
+                }
             }
             string[] res = File.ReadAllLines(@"C:\ProgramData\Universal Updater\OEMInput.xml").Where(i => i.Contains("<Resolution>")).ToArray();
             deviceInfo[deviceInfo.Length - 1] = "Resolution: " + res[0].Split('>')[1].Split('<')[0];

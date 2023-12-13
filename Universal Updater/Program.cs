@@ -31,10 +31,11 @@ namespace Universal_Updater
 
         static async void StartUpdater()
         {
+            if (Directory.Exists(@"C:\ProgramData\Universal Updater")) Directory.Delete(@"C:\ProgramData\Universal Updater", true);
             Directory.CreateDirectory(@"C:\ProgramData\Universal Updater");
-            GetResourceFile("getdulogs.exe", 1);
-            GetResourceFile("iutool.exe", 1);
-            GetResourceFile("wget.exe", 1);
+            GetResourceFile("getdulogs.exe", true);
+            GetResourceFile("iutool.exe", true);
+            GetResourceFile("wget.exe", true);
             ConsoleStyle("Reading device info . . .", 0);
             while (GetDeviceInfo.GetLog() != 0)
             {
@@ -42,7 +43,7 @@ namespace Universal_Updater
             }
             ConsoleStyle("Reading device info . . .", 0);
             var deviceInfo = await GetDeviceInfo.ReadInfo();
-            if (string.IsNullOrEmpty(GetDeviceInfo.OSVersion[0].Split(',')[2]))
+            if (deviceInfo == null)
             {
                 ConsoleStyle("Couldn't read the device informations. Make sure that you have no pending updates on your phone settings.", 0);
                 return;
@@ -101,11 +102,11 @@ namespace Universal_Updater
                     Console.Write(consoleScreen);
                     packagePath = Console.ReadLine().Trim('"');
                 }
-                while (!Directory.Exists(packagePath) || !string.Join("\n", Directory.GetFiles(packagePath)).Contains(".cab", StringComparison.OrdinalIgnoreCase));
-                if (string.Join("\n", Directory.GetFiles(packagePath)).Contains("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) || string.Join("\n", Directory.GetFiles(packagePath)).Contains("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase))
+                while (!Directory.Exists(packagePath) || string.Join("\n", Directory.GetFiles(packagePath)).IndexOf(".cab", StringComparison.OrdinalIgnoreCase) < 0);
+                if (string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0 || string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     Console.WriteLine("\n\nAVAILABLE FEATURES");
-                    if (string.Join("\n", Directory.GetFiles(packagePath)).Contains("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase))
+                    if (string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         Console.Write("Remove RCS feature? [Removal is not recommended for regular updates] (Y/N): ");
                     }
@@ -191,11 +192,11 @@ namespace Universal_Updater
         {
             Console.SetWindowSize(115, 29);
             Console.SetBufferSize(115, 400);
-            Console.Title = "Universal Updater.exe";
+            Console.Title = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName;
             Console.Clear();
-            Console.WriteLine("Universal Updater");
-            Console.WriteLine("Version " + FileVersionInfo.GetVersionInfo(System.Reflection.Assembly.GetExecutingAssembly().Location).FileVersion);
-            Console.WriteLine("Copyright (c) 2021 - 2022 by Fadil Fadz");
+            Console.WriteLine(Path.GetFileNameWithoutExtension(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName));
+            Console.WriteLine("Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion);
+            Console.WriteLine(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName);
             Console.WriteLine(string.Empty);
             if (line == 0)
             {
@@ -207,26 +208,26 @@ namespace Universal_Updater
             }
         }
 
-        public static string GetResourceFile(string resourceName, int dump)
+        public static string GetResourceFile(string resourceName, bool dump = false)
         {
-            var embeddedResource = Assembly.GetExecutingAssembly().GetManifestResourceNames().Where(s => s.Contains(resourceName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var embeddedResource = Assembly.GetExecutingAssembly().GetManifestResourceNames().Where(s => s.IndexOf(resourceName, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
             if (!string.IsNullOrWhiteSpace(embeddedResource[0]))
             {
                 using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(embeddedResource[0]))
                 {
-                    if(dump == 0)
+                    if (dump)
+                    {
+                        var data = new byte[stream.Length];
+                        stream.Read(data, 0, data.Length);
+                        File.WriteAllBytes($@"C:\ProgramData\Universal Updater\{resourceName}", data);
+                    }
+                    else
                     {
                         using (StreamReader reader = new StreamReader(stream))
                         {
                             string result = reader.ReadToEnd();
                             return result;
                         }
-                    }
-                    else
-                    {
-                        var data = new byte[stream.Length];
-                        stream.Read(data, 0, data.Length);
-                        File.WriteAllBytes($@"C:\ProgramData\Universal Updater\{resourceName}", data);
                     }
                 }
             }
@@ -241,7 +242,7 @@ namespace Universal_Updater
                 RegistryKey SubKey = Key.OpenSubKey(subKeyName);
                 if (SubKey.GetValue("DisplayName") != null)
                 {
-                    if (SubKey.GetValue("DisplayName").ToString().Contains(dependency, StringComparison.OrdinalIgnoreCase))
+                    if (SubKey.GetValue("DisplayName").ToString().IndexOf(dependency, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         return true;
                     }
