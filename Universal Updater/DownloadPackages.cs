@@ -318,7 +318,7 @@ namespace Universal_Updater
 
                 }
 
-                Program.Write("\nTotal filtered packages: ", ConsoleColor.DarkGray);
+                Program.Write("\nTotal expected packages: ", ConsoleColor.DarkGray);
                 Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
                 Program.WriteLine("1. Push packages");
                 Program.WriteLine("2. Retry");
