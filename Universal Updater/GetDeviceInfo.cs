@@ -29,8 +29,16 @@ namespace Universal_Updater
             getDeviceInfoProcess.StartInfo.RedirectStandardInput = true;
             getDeviceInfoProcess.StartInfo.UseShellExecute = false;
             getDeviceInfoProcess.Start();
-            getDeviceInfoProcess.WaitForExit();
-            return getDeviceInfoProcess.ExitCode;
+            // Better to set timeout and retry?
+            if (getDeviceInfoProcess.WaitForExit(15000))
+            {
+                return getDeviceInfoProcess.ExitCode;
+            }
+            else
+            {
+                getDeviceInfoProcess.Kill();
+                return -1;
+            }
         }
 
         public static async Task<string[]> ReadInfo()
@@ -59,13 +67,16 @@ namespace Universal_Updater
             deviceInfo[0] = SerialNumber[0];
             SerialNumber[0] = $@"{SerialNumber[0].Split(':')[1].Replace(" ", null)}";
             deviceInfo[1] = "PlatformID: " + platID[0].Split('>')[1].Split('<')[0];
+
+            // Here we defined multiple tags for various cases
+            var checkTagsArray = new string[] { "Microsoft.DEVICELAYOUT_QC", "Microsoft.MobileCore.UpdateOS" };
             for (int i = 0, j = 2; i < deviceDetails.Length; i++)
             {
                 if (i == 6)
                 {
                     try
                     {
-                        OSVersion = File.ReadAllLines(@"C:\ProgramData\Universal Updater\InstalledPackages.csv").Where(k => k.Contains("Microsoft.DEVICELAYOUT_QC")).ToArray();
+                        OSVersion = File.ReadAllLines(@"C:\ProgramData\Universal Updater\InstalledPackages.csv").Where(k => k.ContainsAny(checkTagsArray)).ToArray();
                     }
                     catch (FileNotFoundException)
                     {
@@ -105,6 +116,18 @@ namespace Universal_Updater
                 File.AppendAllText($@"{Environment.CurrentDirectory}\{SerialNumber[0]}\DeviceInfo.txt", deviceInfo[i] + "\n");
             }
             return deviceInfo;
+        }
+    }
+    public static class StringExtensions
+    {
+        public static bool ContainsAny(this string str, params string[] values)
+        {
+            foreach (var value in values)
+            {
+                if (str.Contains(value))
+                    return true;
+            }
+            return false;
         }
     }
 }

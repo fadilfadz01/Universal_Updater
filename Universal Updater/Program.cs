@@ -29,39 +29,105 @@ namespace Universal_Updater
             }
         }
 
+        public static void WriteLine(string text, ConsoleColor color = ConsoleColor.White)
+        {
+            Console.ForegroundColor = color;
+            Console.WriteLine(text);
+            Console.ResetColor();
+        }
+        public static void Write(string text, ConsoleColor color = ConsoleColor.White)
+        {
+            Console.ForegroundColor = color;
+            Console.Write(text);
+            Console.ResetColor();
+        }
+        static async Task retryWithCount(int count = 3)
+        {
+            for (int i = 3; i > 0; i--)
+            {
+                ConsoleStyle($"Will retry after {i} seconds . . .", 0);
+                await Task.Delay(1000);
+            }
+        }
         static async void StartUpdater()
         {
-            if (Directory.Exists(@"C:\ProgramData\Universal Updater")) Directory.Delete(@"C:\ProgramData\Universal Updater", true);
+            Console.ResetColor();
+        cleanTempArea:
+            if (Directory.Exists(@"C:\ProgramData\Universal Updater"))
+            {
+                try
+                {
+                    Directory.Delete(@"C:\ProgramData\Universal Updater", true);
+                }
+                catch (Exception ex)
+                {
+                    // Handle iutool in use error (or any other tool)
+                    ConsoleStyle(ex.Message, 0, ConsoleColor.Red);
+                    WriteLine("\nRetrying...", ConsoleColor.DarkYellow);
+                    await Task.Delay(5000);
+                    //Give small delay between retries
+                    await retryWithCount(3);
+                    goto cleanTempArea;
+                }
+            }
             Directory.CreateDirectory(@"C:\ProgramData\Universal Updater");
             GetResourceFile("getdulogs.exe", true);
             GetResourceFile("iutool.exe", true);
             GetResourceFile("wget.exe", true);
-            ConsoleStyle("Reading device info . . .", 0);
-            while (GetDeviceInfo.GetLog() != 0)
+
+            ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+            bool deviceInfoReady = false;
+            while (!deviceInfoReady)
             {
-                ConsoleStyle("Waiting for device to connect . . .", 0);
+                ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+                var exitCode = GetDeviceInfo.GetLog();
+                deviceInfoReady = exitCode == 0;
+                await Task.Delay(1000);
+                if (!deviceInfoReady)
+                {
+                    if (exitCode == -1)
+                    {
+                        ConsoleStyle("Read device info (Timeout), retrying . . .", 0, ConsoleColor.Red);
+                    }
+                    else
+                    {
+                        string formattedErrorCode = "0x" + exitCode.ToString("X");
+                        ConsoleStyle($"Cannot read device info ({formattedErrorCode}), retrying . . .", 0, ConsoleColor.Red);
+                        // Give user more time to read and copy error
+                        await Task.Delay(3000);
+                    }
+                    await Task.Delay(2000);
+                    // Give small delay between retries
+                    await retryWithCount(3);
+                }
             }
-            ConsoleStyle("Reading device info . . .", 0);
+
+            ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
             var deviceInfo = await GetDeviceInfo.ReadInfo();
             if (deviceInfo == null)
             {
-                ConsoleStyle("Couldn't read the device informations. Make sure that you have no pending updates on your phone settings.", 0);
+                ConsoleStyle("Couldn't read the device information.\nMake sure that you have no pending updates on your phone settings.", 0, ConsoleColor.Red);
                 return;
             }
-            ConsoleStyle("DEVICE INFORMATIONS", 1);
+            ConsoleStyle("DEVICE INFORMATIONS", 1, ConsoleColor.DarkGray);
             foreach (string info in deviceInfo)
             {
-                Console.WriteLine(info);
+                WriteLine(info);
             }
             string availableUpdates = CheckForUpdates.AvailableUpdates();
-            Console.WriteLine("\n\nAVAILABLE UPDATES");
-            Console.WriteLine(availableUpdates);
             if (CheckForUpdates.Choice == 1)
             {
-                Console.Write("The OS version didn't reached the minimum required build. Please update to '8.10.14219.341' atleast.");
+                WriteLine("\nThe OS version didn't reached the minimum required build.", ConsoleColor.Red);
+                Write("Please update to ", ConsoleColor.Red);
+                Write("'8.10.14219.341'", ConsoleColor.Blue);
+                WriteLine(" at least.", ConsoleColor.Red);
                 return;
             }
-            Console.Write("Choice: ");
+
+            WriteLine("\nAVAILABLE UPDATES", ConsoleColor.DarkGray);
+            WriteLine(availableUpdates);
+
+            Write("Choice: ", ConsoleColor.Magenta);
             if (CheckForUpdates.Choice == 7)
             {
                 do
@@ -88,41 +154,99 @@ namespace Universal_Updater
             }
             else
             {
-                Console.Write("\nSomething went wrong.");
+                Write("\nSomething went wrong.", ConsoleColor.Red);
                 return;
             }
-            Console.Write(selectedUpdate.KeyChar + "\n");
+            Write(selectedUpdate.KeyChar + "\n");
             if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "Offline")
             {
-                Console.Write("Enter offline packages path: ");
-                string consoleScreen = OutputCapture.Captured.ToString();
+            packagePathArea:
+                packagePath = "";
+                Write("\nEnter offline packages path: ", ConsoleColor.DarkYellow);
                 do
                 {
-                    Console.Clear();
-                    Console.Write(consoleScreen);
                     packagePath = Console.ReadLine().Trim('"');
                 }
-                while (!Directory.Exists(packagePath) || string.Join("\n", Directory.GetFiles(packagePath)).IndexOf(".cab", StringComparison.OrdinalIgnoreCase) < 0);
-                if (string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0 || string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0)
+                while (packagePath.Length == 0);
+
+                string[] folderFiles = new string[] { };
+                if (Directory.Exists(packagePath))
                 {
-                    Console.WriteLine("\n\nAVAILABLE FEATURES");
-                    if (string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
+                    folderFiles = Directory.GetFiles(packagePath);
+                    var hasCabFiles = string.Join("\n", folderFiles).IndexOf(".cab", StringComparison.OrdinalIgnoreCase) > 0;
+                    var hasSpkgFiles = string.Join("\n", folderFiles).IndexOf(".spkg", StringComparison.OrdinalIgnoreCase) > 0;
+                    if (!hasCabFiles && !hasSpkgFiles)
                     {
-                        Console.Write("Remove RCS feature? [Removal is not recommended for regular updates] (Y/N): ");
+                        Program.WriteLine("\nFolder don't have update packages (.cab)!", ConsoleColor.Red);
+                        Program.WriteLine("1. Retry");
+                        Program.WriteLine("2. Exit");
+                        Program.Write("Choice: ", ConsoleColor.Magenta);
+                        ConsoleKeyInfo packagesAction;
+                        do
+                        {
+                            packagesAction = Console.ReadKey(true);
+                        }
+                        while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                        Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                        if (packagesAction.KeyChar == '1')
+                        {
+                            Program.WriteLine("");
+                            goto packagePathArea;
+                        }
+                        else
+                        {
+                            return;
+                        }
+                    }
+                }
+                if (folderFiles.Length > 0)
+                {
+                    if (string.Join("\n", folderFiles).IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0 || string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Console.WriteLine("\nAVAILABLE FEATURES", ConsoleColor.DarkGray);
+                        if (string.Join("\n", Directory.GetFiles(packagePath)).IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            printRCSMessage();
+                        }
+                        else
+                        {
+                            printProjectAMessage();
+                        }
+                        do
+                        {
+                            featureChoice = Console.ReadKey(true);
+                        }
+                        while (featureChoice.KeyChar != 'Y' && featureChoice.KeyChar != 'N' && featureChoice.KeyChar != 'y' && featureChoice.KeyChar != 'n');
+                        Write(featureChoice.KeyChar.ToString().ToUpper() + "\n");
+                    }
+
+                    WriteLine("\nPREPARING PACKAGES", ConsoleColor.DarkGray);
+                    DownloadPackages.OfflineUpdate(folderFiles, featureChoice.KeyChar.ToString().ToUpper());
+                }
+                else
+                {
+                    Program.WriteLine("\nFolder is empty or not exists!", ConsoleColor.Red);
+                    Program.WriteLine("1. Retry");
+                    Program.WriteLine("2. Exit");
+                    Program.Write("Choice: ", ConsoleColor.Magenta);
+                    ConsoleKeyInfo packagesAction;
+                    do
+                    {
+                        packagesAction = Console.ReadKey(true);
+                    }
+                    while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                    Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                    if (packagesAction.KeyChar == '1')
+                    {
+                        Program.WriteLine("");
+                        goto packagePathArea;
                     }
                     else
                     {
-                        Console.Write("Install project astoria (Y/N): ");
+                        return;
                     }
-                    do
-                    {
-                        featureChoice = Console.ReadKey(true);
-                    }
-                    while (featureChoice.KeyChar != 'Y' && featureChoice.KeyChar != 'N' && featureChoice.KeyChar != 'y' && featureChoice.KeyChar != 'n');
-                    Console.Write(featureChoice.KeyChar.ToString().ToUpper() + "\n");
                 }
-                Console.WriteLine("\n\nPREPARING PACKAGES");
-                DownloadPackages.OfflineUpdate(packagePath, featureChoice.KeyChar.ToString().ToUpper());
+
             }
             else
             {
@@ -131,56 +255,85 @@ namespace Universal_Updater
                 {
                     if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13016.108" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13037.0")
                     {
-                        Console.WriteLine("\n\nAVAILABLE FEATURES");
+                        WriteLine("\nAVAILABLE FEATURES", ConsoleColor.DarkGray);
                         if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066")
                         {
-                            Console.Write("Remove RCS feature? [Removal is not recommended for regular updates] (Y/N): ");
+                            printRCSMessage();
                         }
                         else
                         {
-                            Console.Write("Install project astoria (Y/N): ");
+                            printProjectAMessage();
                         }
                         do
                         {
                             featureChoice = Console.ReadKey(true);
                         }
                         while (featureChoice.KeyChar != 'Y' && featureChoice.KeyChar != 'N' && featureChoice.KeyChar != 'y' && featureChoice.KeyChar != 'n');
-                        Console.Write(featureChoice.KeyChar.ToString().ToUpper() + "\n");
+                        Write(featureChoice.KeyChar.ToString().ToUpper() + "\n");
                     }
                 }
-                Console.WriteLine("\n\nDOWNLOADING PACKAGES");
-                string consoleScreen = OutputCapture.Captured.ToString();
+                WriteLine("\nDOWNLOADING PACKAGES", ConsoleColor.DarkGray);
                 while (!IsInternetConnected())
                 {
-                    Console.Clear();
-                    Console.Write(consoleScreen);
-                    Console.Write("No internet connection. Waiting for internet to connect . . .");
+                    ConsoleStyle("Waiting for internet to connect . . .", 1, ConsoleColor.DarkYellow);
                     await Task.Delay(2000);
                 }
-                Console.Clear();
-                Console.Write(consoleScreen);
+
+                ConsoleStyle("\nDOWNLOADING PACKAGES", 1, ConsoleColor.DarkGray);
                 await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1]);
             }
-            Console.Write("\n\nPUSHING PACKAGES");
+
+            Write("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
             PushPackages.StartUpdate();
             await Task.Delay(15000);
             if (!PushPackages.updateProcess.HasExited)
             {
-                MessageBox((IntPtr)0, "Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.", "Universal Updater.exe", 0);
+                var commonErrors = "\n\nCommon Errors:";
+                commonErrors += "\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
+                commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
+                commonErrors += "\n\n0x80188302: Package already present on the image";
+                commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
+                commonErrors += "\n\n0x80188306: File Collision or Not Found\nSolution: ensure list match InstalledPackages.csv";
+                commonErrors += "\n\n0x80188307: Package DSM; or contents are invalid\nSolution: Keep only one type in the folder CBS or SPKG,\nChoose the correct packages type";
+                commonErrors += "\n\n0x80188308: Not enough space";
+                commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
+                commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
+                commonErrors += "\n\n0x802A0006: Try with another PC";
+
+                MessageBox((IntPtr)0, $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}", "Universal Updater.exe", 0);
             }
             return;
+        }
+
+        static void printRCSMessage()
+        {
+            WriteLine("Remove RCS feature?");
+            Write("[Removal is ", ConsoleColor.DarkYellow);
+            Write(" not recommended ", ConsoleColor.Red);
+            Write("for ", ConsoleColor.DarkYellow);
+            Write("regular updates", ConsoleColor.Blue);
+            WriteLine("]: ", ConsoleColor.DarkYellow);
+            Write("Choice (Y/N): ", ConsoleColor.Magenta);
+        }
+
+        static void printProjectAMessage()
+        {
+            Write("Install ");
+            Write("ProjectA (Astoria)", ConsoleColor.Green);
+            Write("?");
+            Write(" (Y/N): ", ConsoleColor.Magenta);
         }
 
         static void Main(string[] args)
         {
             if (!IsDependenciesInstalled("Microsoft Visual C++ 2012 Redistributable (x86)"))
             {
-                Console.WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2012.Redistributable.(x86)'");
+                WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2012.Redistributable.(x86)'", ConsoleColor.Red);
                 return;
             }
             else if (!IsDependenciesInstalled("Microsoft Visual C++ 2013 Redistributable (x86)"))
             {
-                Console.WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2013.Redistributable.(x86)'");
+                WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2013.Redistributable.(x86)'", ConsoleColor.Red);
                 return;
             }
             StartUpdater();
@@ -188,16 +341,26 @@ namespace Universal_Updater
             new Program();
         }
 
-        static void ConsoleStyle(string text, int line)
+        static void ConsoleStyle(string text, int line, ConsoleColor color = ConsoleColor.White)
         {
+            Console.ResetColor();
             Console.SetWindowSize(115, 29);
             Console.SetBufferSize(115, 400);
             Console.Title = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName;
             Console.Clear();
-            Console.WriteLine(Path.GetFileNameWithoutExtension(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName));
-            Console.WriteLine("Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion);
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.Write(Path.GetFileNameWithoutExtension(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName));
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine(" Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion);
+            Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName);
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("This app provided AS-IS without any warranty");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("GitHub: https://github.com/fadilfadz01/Universal_Updater");
+
             Console.WriteLine(string.Empty);
+            Console.ForegroundColor = color;
             if (line == 0)
             {
                 Console.Write(text);

@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -14,29 +16,48 @@ namespace Universal_Updater
     {
         static Tuple<DateTime, long, long> DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.MinValue, 0, 0);
         static string[] installedPackages = File.ReadAllLines(@"C:\ProgramData\Universal Updater\InstalledPackages.csv");
-        static readonly string[] filteredPackages = new string[installedPackages.Length];
+        static List<string> filteredPackages = new List<string>();
         static bool isFeatureInstalled = false;
-        static readonly string[] knownPackages = { "ms_commsenhancementglobal.mainos.spkg", "ms_commsmessagingglobal.mainos.spkg", "microsoftphonefm.platformmanifest.efiesp", "microsoftphonefm.platformmanifest.mainos", "microsoftphonefm.platformmanifest.updateos", "UserInstallableFM.PlatformManifest" };
+        static bool filterCBSPackagesOnly = false;
+        static readonly string[] knownPackages = { "ms_commsenhancementglobal.mainos", "ms_commsmessagingglobal.mainos", "microsoftphonefm.platformmanifest.efiesp", "microsoftphonefm.platformmanifest.mainos", "microsoftphonefm.platformmanifest.updateos", "UserInstallableFM.PlatformManifest" };
         static readonly string[] featurePackages = { "MS_RCS_FEATURE_PACK.MainOS.cbsr", "ms_projecta.mainos" };
-        static readonly string[] packageExtension = { ".spkg", ".cbs_", ".cab" };
-        static int packagePosition = 0;
+        static readonly string[] skippedPackages = { };
+        static readonly string[] packageCBSExtension = { ".cab", ".cbs_" };
+        static readonly string[] packageSPKGExtension = { ".spkg", ".spkg_" };
         static Uri downloadFile;
+
+        public static string[] getExtensionsList()
+        {
+            if (!filterCBSPackagesOnly)
+            {
+                return packageSPKGExtension;
+            }
+            return packageCBSExtension;
+        }
 
         public static bool OnlineUpdate(string updateBuild)
         {
+            // For pre-built in packages currently check for both CBS or SPKG,
+            // those suppose to be sorted already for SPGK or CBS
+            var targetExtensionList = packageCBSExtension.Concat(packageSPKGExtension).ToArray();
+
+            // Get file content only once
+            var targetListFile = Program.GetResourceFile($"{updateBuild}.txt").Split('\n');
             for (int i = 1; i < installedPackages.Length; i++)
             {
-                for (int j = 0; j < packageExtension.Length; j++)
+                for (int j = 0; j < targetExtensionList.Length; j++)
                 {
-                    var requiredPackages = Program.GetResourceFile($"{updateBuild}.txt").Split('\n').Where(k => k.IndexOf(installedPackages[i].Split(',')[1] + packageExtension[j], StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
-                    foreach (string packages in requiredPackages)
+                    var requiredPackages = targetListFile.Where(k => k.IndexOf(installedPackages[i].Split(',')[1] + targetExtensionList[j], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                    if (requiredPackages != null)
                     {
-                        if (packages.IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0 || packages.IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
+                        if (requiredPackages.IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0 || requiredPackages.IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
                             isFeatureInstalled = true;
                         }
-                        filteredPackages[packagePosition++] = packages;
-                        break;
+                        if (!shouldSkip(requiredPackages, true))
+                        {
+                            filteredPackages.Add(requiredPackages);
+                        }
                     }
                 }
             }
@@ -44,60 +65,306 @@ namespace Universal_Updater
             {
                 if (string.Join("\n", filteredPackages).IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) < 0)
                 {
-                    var knownPackage = Program.GetResourceFile($"{updateBuild}.txt").Split('\n').Where(j => j.IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
-                    foreach (string package in knownPackage)
+                    var knownPackage = targetListFile.Where(j => j.IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                    if (knownPackage != null)
                     {
-                        filteredPackages[packagePosition++] = package;
-                        break;
+                        if (!shouldSkip(knownPackage, true))
+                        {
+                            filteredPackages.Add(knownPackage);
+                        }
                     }
                 }
             }
             return isFeatureInstalled;
         }
 
-        public static void OfflineUpdate(string packagePath, string pushFeature)
+        public static void OfflineUpdate(string[] folderFiles, string pushFeature)
         {
-            for (int i = 1; i < installedPackages.Length; i++)
+        filterPackages:
+            filteredPackages.Clear();
+            var folderHasCBS = false;
+            var folderHasSPKG = false;
+            for (int i = 0; i < packageCBSExtension.Length; i++)
             {
-                for (int j = 0; j < packageExtension.Length; j++)
+                var testPackages = folderFiles.Where(k => k.IndexOf(packageCBSExtension[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                if (testPackages != null)
                 {
-                    var requiredPackages = Directory.GetFiles(packagePath).Where(k => k.IndexOf(installedPackages[i].Split(',')[1] + packageExtension[j], StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
-                    foreach (string packages in requiredPackages)
+                    folderHasCBS = true;
+                    break;
+                }
+            }
+            for (int i = 0; i < packageSPKGExtension.Length; i++)
+            {
+                var testPackages = folderFiles.Where(k => k.IndexOf(packageSPKGExtension[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                if (testPackages != null)
+                {
+                    folderHasSPKG = true;
+                    break;
+                }
+            }
+
+            // We show this question only if folder has mixed packages
+            if (folderHasCBS && folderHasSPKG)
+            {
+                Program.Write("CBS", ConsoleColor.Blue);
+                Program.Write(" and ", ConsoleColor.DarkYellow);
+                Program.Write("SPKG", ConsoleColor.Blue);
+                Program.WriteLine(" packages detected\nEnsure to use the correct type\nUsually SPKG used for WP8, CBS for W10M", ConsoleColor.DarkYellow);
+                Program.WriteLine("1. Use CBS");
+                Program.WriteLine("2. Use SPKG");
+                Program.Write("Choice: ", ConsoleColor.Magenta);
+                ConsoleKeyInfo packagesType;
+                do
+                {
+                    packagesType = Console.ReadKey(true);
+                }
+                while (packagesType.KeyChar != '1' && packagesType.KeyChar != '2');
+                Console.Write(packagesType.KeyChar.ToString() + "\n");
+                filterCBSPackagesOnly = packagesType.KeyChar == '1';
+            }
+            else
+            {
+                // Fall to what exists
+                filterCBSPackagesOnly = folderHasCBS;
+            }
+
+            // Allow user to push all package if he want
+            Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
+            Program.WriteLine("1. Filter packages (Recommended)", ConsoleColor.Green);
+            Program.WriteLine("2. Push all", ConsoleColor.DarkYellow);
+            Program.Write("Choice: ", ConsoleColor.Magenta);
+            ConsoleKeyInfo packagesFilterAction;
+            do
+            {
+                packagesFilterAction = Console.ReadKey(true);
+            }
+            while (packagesFilterAction.KeyChar != '1' && packagesFilterAction.KeyChar != '2');
+            Console.Write(packagesFilterAction.KeyChar.ToString() + "\n");
+
+            var targetExtensionList = getExtensionsList();
+            var previewType = "cbs";
+            if (!filterCBSPackagesOnly)
+            {
+                previewType = "spkg";
+            }
+
+            if (packagesFilterAction.KeyChar == '1')
+            {
+                Program.WriteLine($"\nFiltering packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
+
+                for (int i = 0; i < installedPackages.Length; i++)
+                {
+                    for (int j = 0; j < targetExtensionList.Length; j++)
                     {
-                        filteredPackages[packagePosition++] = packages;
-                        break;
+                        var checkName = installedPackages[i].Split(',')[1] + targetExtensionList[j];
+                        var requiredPackages = folderFiles.Where(k => k.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                        if (requiredPackages != null)
+                        {
+                            if (!shouldSkip(requiredPackages))
+                            {
+                                filteredPackages.Add(requiredPackages);
+                            }
+                        }
+                    }
+                }
+                for (int i = 0; i < knownPackages.Length; i++)
+                {
+                    if (string.Join("\n", filteredPackages).IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        var knownPackage = folderFiles.Where(j => j.IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                        if (knownPackage != null)
+                        {
+                            bool skipThisPackage = false;
+                            if (filterCBSPackagesOnly)
+                            {
+                                foreach (var spkgExt in packageSPKGExtension)
+                                {
+                                    if (knownPackage.IndexOf(spkgExt, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    {
+                                        skipThisPackage = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                if (knownPackage.IndexOf(".cbs_", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    skipThisPackage = true;
+                                    break;
+                                }
+                            }
+                            if (!skipThisPackage && !shouldSkip(knownPackage))
+                            {
+                                filteredPackages.Add(knownPackage);
+                            }
+                        }
+                    }
+                }
+                if (pushFeature == "Y")
+                {
+                    for (int i = 0; i < featurePackages.Length; i++)
+                    {
+                        var requiredPackages = folderFiles.Where(j => j.IndexOf(featurePackages[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                        if (requiredPackages != null)
+                        {
+                            filteredPackages.Add(requiredPackages);
+                        }
                     }
                 }
             }
-            for (int i = 0; i < knownPackages.Length; i++)
+            else
             {
-                if (string.Join("\n", filteredPackages).IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) < 0)
+                Program.WriteLine($"\nAdding packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
+                for (int j = 0; j < targetExtensionList.Length; j++)
                 {
-                    var knownPackage = Directory.GetFiles(packagePath).Where(j => j.IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
-                    foreach (string package in knownPackage)
+                    var requiredPackages = folderFiles.Where(k => k.IndexOf(targetExtensionList[j], StringComparison.OrdinalIgnoreCase) >= 0);
+                    if (requiredPackages != null)
                     {
-                        filteredPackages[packagePosition++] = package;
-                        break;
+                        foreach (var requiredPackage in requiredPackages)
+                        {
+                            bool skipThisPackage = false;
+                            if (filterCBSPackagesOnly)
+                            {
+                                foreach (var spkgExt in packageSPKGExtension)
+                                {
+                                    if (requiredPackage.IndexOf(spkgExt, StringComparison.OrdinalIgnoreCase) >= 0)
+                                    {
+                                        skipThisPackage = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                if (requiredPackage.IndexOf(".cbs_", StringComparison.OrdinalIgnoreCase) >= 0)
+                                {
+                                    skipThisPackage = true;
+                                    break;
+                                }
+                            }
+                            if (!skipThisPackage && !shouldSkip(requiredPackage))
+                            {
+                                filteredPackages.Add(requiredPackage);
+                            }
+                        }
                     }
                 }
             }
-            if (pushFeature == "Y")
+
+            if (filteredPackages.Count > 0)
             {
-                for (int i = 0; i < featurePackages.Length; i++)
+                var testCabFile = filteredPackages.FirstOrDefault();
+                try
                 {
-                    var requiredPackages = Directory.GetFiles(packagePath).Where(j => j.IndexOf(featurePackages[i], StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
-                    foreach (string packages in requiredPackages)
+                    X509Certificate cert = X509Certificate.CreateFromSignedFile(testCabFile);
+
+                    // Currently we do basic check using [Issuer]
+                    // Test signed mostly contain `Development` or `Test`
+                    // Production has mostly `Microsoft Code Signing`
+                    Program.Write("Packages signature may ");
+                    var hasDevelopmentKeyword = cert.Issuer.IndexOf("Development", StringComparison.OrdinalIgnoreCase) >= 0;
+                    var hasTestKeyword = cert.Issuer.IndexOf("Test", StringComparison.OrdinalIgnoreCase) >= 0;
+                    var hasSigningKeyword = cert.Issuer.IndexOf("Microsoft Code Signing", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if ((hasDevelopmentKeyword || hasTestKeyword) && !hasSigningKeyword)
                     {
-                        filteredPackages[packagePosition++] = packages;
+                        Program.WriteLine("test signed.", ConsoleColor.DarkYellow);
+                    }
+                    else
+                    {
+                        Program.WriteLine("production signed.", ConsoleColor.Green);
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                }
+                try
+                {
+                    // Not sure how this works, but tested on Windows 11 and seems fine
+                    var shellAppType = Type.GetTypeFromProgID("Shell.Application");
+                    dynamic shellApp = Activator.CreateInstance(shellAppType);
+                    var cabFolder = shellApp.NameSpace(testCabFile);
+
+                    foreach (var item in cabFolder.Items())
+                    {
+                        var dateModifiedString = (string)cabFolder.GetDetailsOf(item, 3);
+                        // Fix possible encoding crap
+                        byte[] bytes = Encoding.Default.GetBytes(dateModifiedString);
+                        dateModifiedString = Encoding.UTF8.GetString(bytes).Replace("?", "");
+                        DateTime? formatedDate = dateModifiedString.ToDate(null);
+
+                        if (formatedDate.HasValue)
+                        {
+                            var dateOnly = formatedDate.Value.Date;
+                            Program.Write("\nIf you are updating with ", ConsoleColor.DarkYellow);
+                            Program.Write("(Test Signed)", ConsoleColor.Blue);
+                            Program.WriteLine(" packages,", ConsoleColor.DarkYellow);
+                            Program.WriteLine("set your device to the date below", ConsoleColor.DarkYellow);
+                            var datePlusTwoDays = dateOnly.AddDays(2);
+                            Program.Write("Date: " + datePlusTwoDays.ToString("d"), ConsoleColor.Green);
+                            Program.WriteLine(" (Packages date: " + dateOnly.ToString("d") + ")", ConsoleColor.DarkGray);
+                        }
+                        else
+                        {
+                            Program.WriteLine("\nCould not parse date: " + dateModifiedString, ConsoleColor.DarkGray);
+                            Program.WriteLine("(Ignore this if packages are not test signed)", ConsoleColor.DarkGray);
+                        }
                         break;
                     }
                 }
+                catch (Exception ex)
+                {
+
+                }
+
+                Program.Write("\nTotal expected packages: ", ConsoleColor.DarkGray);
+                Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
+                Program.WriteLine("1. Push packages");
+                Program.WriteLine("2. Retry");
+                Program.Write("Choice: ", ConsoleColor.Magenta);
+                ConsoleKeyInfo packagesAction;
+                do
+                {
+                    packagesAction = Console.ReadKey(true);
+                }
+                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                Console.Write(packagesAction.KeyChar.ToString() + "\n");
+
+                if (packagesAction.KeyChar == '1')
+                {
+                    for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
+                    {
+                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
+                        File.Copy(filteredPackages[i], $@"{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
+                    }
+                }
+                else
+                {
+                    Program.WriteLine("");
+                    goto filterPackages;
+                }
             }
-            for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
+            else
             {
-                Console.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}");
-                File.Copy(filteredPackages[i], $@"{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
+                Program.WriteLine("\nNo packages detected that match with your system!", ConsoleColor.Red);
+                Program.WriteLine("1. Retry");
+                Program.WriteLine("2. Exit");
+                Program.Write("Choice: ", ConsoleColor.Magenta);
+                ConsoleKeyInfo packagesAction;
+                do
+                {
+                    packagesAction = Console.ReadKey(true);
+                }
+                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                if (packagesAction.KeyChar == '1')
+                {
+                    Program.WriteLine("");
+                    goto filterPackages;
+                }
             }
+
         }
 
         public static async Task DownloadUpdate(string update)
@@ -152,6 +419,64 @@ namespace Universal_Updater
         {
             DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.Now, downloadProgressChangedEventArgs.TotalBytesToReceive, downloadProgressChangedEventArgs.BytesReceived);
             Console.Title = $"Universal Updater.exe  [Downloading: {downloadFile.LocalPath.Split('/').Last().Remove(28)}... {((DownloadingProgress.Item3 * 100) / DownloadingProgress.Item2)}% - {DownloadingProgress.Item3}/{DownloadingProgress.Item2}]";
+        }
+        public static bool shouldSkip(string package, bool onlinePackage = false)
+        {
+            foreach (var testCheck in skippedPackages)
+            {
+                if (package.IndexOf(testCheck, StringComparison.OrdinalIgnoreCase) > 0)
+                {
+                    // Package exists in the skip list
+                    return true;
+                }
+            }
+
+            if (!onlinePackage)
+            {
+                FileInfo fileInfo = new FileInfo(package);
+                long sizeInBytes = fileInfo.Length;
+
+                if (sizeInBytes <= 0)
+                {
+                    // Package has 0MB size, not a valid package
+                    return true;
+                }
+            }
+
+            if (filteredPackages.Contains(package))
+            {
+                // Package already added, this happens due to extension and prefix match
+                return true;
+            }
+
+            return false;
+        }
+    }
+    public static class Extensions
+    {
+        /// Extension method parsing a date string to a DateTime? <para/>
+        /// <summary>
+        /// </summary>
+        /// <param name="dateTimeStr">The date string to parse</param>
+        /// <param name="dateFmt">dateFmt is optional and allows to pass 
+        /// a parsing pattern array or one or more patterns passed 
+        /// as string parameters</param>
+        /// <returns>Parsed DateTime or null</returns>
+        public static DateTime? ToDate(this string dateTimeStr, params string[] dateFmt)
+        {
+            // example: var dt = "2011-03-21 13:26".ToDate(new string[]{"yyyy-MM-dd HH:mm", 
+            //                                                  "M/d/yyyy h:mm:ss tt"});
+            // or simpler: 
+            // var dt = "2011-03-21 13:26".ToDate("yyyy-MM-dd HH:mm", "M/d/yyyy h:mm:ss tt");
+            const DateTimeStyles style = DateTimeStyles.AllowWhiteSpaces;
+            if (dateFmt == null)
+            {
+                var dateInfo = System.Threading.Thread.CurrentThread.CurrentCulture.DateTimeFormat;
+                dateFmt = dateInfo.GetAllDateTimePatterns();
+            }
+            var result = DateTime.TryParseExact(dateTimeStr, dateFmt, CultureInfo.InvariantCulture,
+                           style, out var dt) ? dt : null as DateTime?;
+            return result;
         }
     }
 }
