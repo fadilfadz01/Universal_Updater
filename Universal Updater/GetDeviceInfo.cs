@@ -30,7 +30,7 @@ namespace Universal_Updater
             getDeviceInfoProcess.StartInfo.UseShellExecute = false;
             getDeviceInfoProcess.Start();
             // Better to set timeout and retry?
-            if (getDeviceInfoProcess.WaitForExit(15000))
+            if (getDeviceInfoProcess.WaitForExit(30000))
             {
                 return getDeviceInfoProcess.ExitCode;
             }

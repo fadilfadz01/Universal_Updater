@@ -303,9 +303,7 @@ namespace Universal_Updater
                 {
                 }
 
-                // If we got the certificate date then just use it
                 DateTime? formatedDate = null;
-
                 var expectedDateFormat = "";
                 var dateModifiedString = "";
                 try
