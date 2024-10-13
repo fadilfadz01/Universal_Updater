@@ -295,7 +295,7 @@ namespace Universal_Updater
                     }
                     else
                     {
-                        Program.WriteLine("Production signed", ConsoleColor.Green);
+                        Program.Write("Production signed", ConsoleColor.Green);
                         Program.WriteLine(" (Please double check)", ConsoleColor.DarkGray);
                     }
                 }
