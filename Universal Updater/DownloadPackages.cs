@@ -8,6 +8,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace Universal_Updater
@@ -78,7 +79,7 @@ namespace Universal_Updater
             return isFeatureInstalled;
         }
 
-        public static void OfflineUpdate(string[] folderFiles, string pushFeature)
+        public static bool OfflineUpdate(string[] folderFiles, string pushFeature)
         {
         filterPackages:
             filteredPackages.Clear();
@@ -130,8 +131,8 @@ namespace Universal_Updater
 
             // Allow user to push all package if he want
             Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
-            Program.WriteLine("1. Filter packages (Recommended)", ConsoleColor.Green);
-            Program.WriteLine("2. Push all", ConsoleColor.DarkYellow);
+            Program.WriteLine("1. Filter packages", ConsoleColor.Green);
+            Program.WriteLine("2. Include all", ConsoleColor.DarkYellow);
             Program.Write("Choice: ", ConsoleColor.Magenta);
             ConsoleKeyInfo packagesFilterAction;
             do
@@ -255,30 +256,58 @@ namespace Universal_Updater
             if (filteredPackages.Count > 0)
             {
                 var testCabFile = filteredPackages.FirstOrDefault();
+                var certificateIssuer = "";
+                var certificateDate = "";
+                var certificateExpireDate = "";
+                var dtFmt = "";
+                bool isTestSigned = false;
                 try
                 {
                     X509Certificate cert = X509Certificate.CreateFromSignedFile(testCabFile);
 
+                    certificateDate = cert.GetEffectiveDateString();
+                    certificateExpireDate = cert.GetExpirationDateString();
+                    certificateIssuer = cert.Issuer;
+                    Match m = Regex.Match(certificateIssuer, @"CN=(.*?)(?=,)");
+                    if (m.Success)
+                    {
+                        certificateIssuer = m.Groups[1].Value;
+                    }
+
+                    Program.WriteLine("\n[CERTIFICATE]", ConsoleColor.Green);
+                    Program.Write("Issuer : ", ConsoleColor.DarkGray);
+                    Program.WriteLine(certificateIssuer, ConsoleColor.DarkCyan);
+                    Program.Write("Date   : ", ConsoleColor.DarkGray);
+                    Program.Write(certificateDate.ToDate(ref dtFmt).Value.ToString("d"), ConsoleColor.DarkGray);
+                    Program.Write(" - ", ConsoleColor.DarkGray);
+                    Program.WriteLine(certificateExpireDate.ToDate(ref dtFmt).Value.ToString("d"), ConsoleColor.DarkGray);
+                    Program.Write("Type   : ", ConsoleColor.DarkGray);
+
                     // Currently we do basic check using [Issuer]
                     // Test signed mostly contain `Development` or `Test`
-                    // Production has mostly `Microsoft Code Signing`
-                    Program.Write("Packages signature may ");
-                    var hasDevelopmentKeyword = cert.Issuer.IndexOf("Development", StringComparison.OrdinalIgnoreCase) >= 0;
-                    var hasTestKeyword = cert.Issuer.IndexOf("Test", StringComparison.OrdinalIgnoreCase) >= 0;
-                    var hasSigningKeyword = cert.Issuer.IndexOf("Microsoft Code Signing", StringComparison.OrdinalIgnoreCase) >= 0;
-                    if ((hasDevelopmentKeyword || hasTestKeyword) && !hasSigningKeyword)
+                    var hasDevelopmentKeyword = certificateIssuer.IndexOf("Development", StringComparison.OrdinalIgnoreCase) >= 0;
+                    var hasTestKeyword = certificateIssuer.IndexOf("Test", StringComparison.OrdinalIgnoreCase) >= 0;
+                    if ((hasDevelopmentKeyword || hasTestKeyword))
                     {
-                        Program.WriteLine("test signed.", ConsoleColor.DarkYellow);
+                        Program.Write("Test signed", ConsoleColor.DarkYellow);
+                        Program.WriteLine(" (Please double check)", ConsoleColor.DarkGray);
+                        isTestSigned = true;
                     }
                     else
                     {
-                        Program.WriteLine("production signed.", ConsoleColor.Green);
+                        Program.WriteLine("Production signed", ConsoleColor.Green);
+                        Program.WriteLine(" (Please double check)", ConsoleColor.DarkGray);
                     }
                 }
                 catch (Exception ex)
                 {
-
                 }
+
+                // If we got the certificate date then just use it
+                DateTime? formatedDate = null;
+
+                var expectedDateFormat = "";
+                var dateModifiedString = "";
                 try
                 {
                     // Not sure how this works, but tested on Windows 11 and seems fine
@@ -288,39 +317,44 @@ namespace Universal_Updater
 
                     foreach (var item in cabFolder.Items())
                     {
-                        var dateModifiedString = (string)cabFolder.GetDetailsOf(item, 3);
+                        dateModifiedString = (string)cabFolder.GetDetailsOf(item, 3);
                         // Fix possible encoding crap
                         byte[] bytes = Encoding.Default.GetBytes(dateModifiedString);
                         dateModifiedString = Encoding.UTF8.GetString(bytes).Replace("?", "");
-                        DateTime? formatedDate = dateModifiedString.ToDate(null);
-
-                        if (formatedDate.HasValue)
-                        {
-                            var dateOnly = formatedDate.Value.Date;
-                            Program.Write("\nIf you are updating with ", ConsoleColor.DarkYellow);
-                            Program.Write("(Test Signed)", ConsoleColor.Blue);
-                            Program.WriteLine(" packages,", ConsoleColor.DarkYellow);
-                            Program.WriteLine("set your device to the date below", ConsoleColor.DarkYellow);
-                            var datePlusTwoDays = dateOnly.AddDays(2);
-                            Program.Write("Date: " + datePlusTwoDays.ToString("d"), ConsoleColor.Green);
-                            Program.WriteLine(" (Packages date: " + dateOnly.ToString("d") + ")", ConsoleColor.DarkGray);
-                        }
-                        else
-                        {
-                            Program.WriteLine("\nCould not parse date: " + dateModifiedString, ConsoleColor.DarkGray);
-                            Program.WriteLine("(Ignore this if packages are not test signed)", ConsoleColor.DarkGray);
-                        }
+                        formatedDate = dateModifiedString.ToDate(ref expectedDateFormat);
                         break;
                     }
                 }
                 catch (Exception ex)
                 {
+                }
 
+
+                if (formatedDate != null && formatedDate.HasValue)
+                {
+                    var dateOnly = formatedDate.Value.Date;
+                    Program.Write("Files  : " + dateOnly.ToString("d"), ConsoleColor.DarkGray);
+                    var datePlusTwoDays = dateOnly.AddDays(2);
+                    Program.WriteLine($" ({dtFmt})", ConsoleColor.DarkGray);
+
+                    if (isTestSigned)
+                    {
+                        // Show this red label if we expect that packages are test signed
+                        Program.Write("\n[IMPORTANT] ", ConsoleColor.DarkRed);
+                        Program.Write("\nPackages expected to be ", ConsoleColor.DarkYellow);
+                        Program.WriteLine("(Test Signed)", ConsoleColor.Blue);
+                        Program.WriteLine("Set your device to the required date", ConsoleColor.DarkYellow);
+                    }
+                }
+                else
+                {
+                    Program.WriteLine("\nCould not parse date: " + dateModifiedString, ConsoleColor.DarkGray);
+                    Program.WriteLine("(Ignore this if packages are not test signed)", ConsoleColor.DarkGray);
                 }
 
                 Program.Write("\nTotal expected packages: ", ConsoleColor.DarkGray);
                 Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
-                Program.WriteLine("1. Push packages");
+                Program.WriteLine("1. Push packages", ConsoleColor.Green);
                 Program.WriteLine("2. Retry");
                 Program.Write("Choice: ", ConsoleColor.Magenta);
                 ConsoleKeyInfo packagesAction;
@@ -363,11 +397,16 @@ namespace Universal_Updater
                     Program.WriteLine("");
                     goto filterPackages;
                 }
+                else
+                {
+                    return false;
+                }
             }
 
+            return true;
         }
 
-        public static async Task DownloadUpdate(string update)
+        public static async Task<bool> DownloadUpdate(string update)
         {
             WebClient client = new WebClient();
             Process downloadProcess = new Process();
@@ -413,6 +452,8 @@ namespace Universal_Updater
                     while (fileSize != new FileInfo($@"{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}").Length);
                 }
             }
+
+            return true;
         }
 
         private static void DownloadProgressChanged(object sender, DownloadProgressChangedEventArgs downloadProgressChangedEventArgs)
@@ -454,28 +495,15 @@ namespace Universal_Updater
     }
     public static class Extensions
     {
-        /// Extension method parsing a date string to a DateTime? <para/>
-        /// <summary>
-        /// </summary>
-        /// <param name="dateTimeStr">The date string to parse</param>
-        /// <param name="dateFmt">dateFmt is optional and allows to pass 
-        /// a parsing pattern array or one or more patterns passed 
-        /// as string parameters</param>
-        /// <returns>Parsed DateTime or null</returns>
-        public static DateTime? ToDate(this string dateTimeStr, params string[] dateFmt)
+        public static DateTime? ToDate(this string dateTimeStr, ref string fmtOut)
         {
-            // example: var dt = "2011-03-21 13:26".ToDate(new string[]{"yyyy-MM-dd HH:mm", 
-            //                                                  "M/d/yyyy h:mm:ss tt"});
-            // or simpler: 
-            // var dt = "2011-03-21 13:26".ToDate("yyyy-MM-dd HH:mm", "M/d/yyyy h:mm:ss tt");
             const DateTimeStyles style = DateTimeStyles.AllowWhiteSpaces;
-            if (dateFmt == null)
-            {
-                var dateInfo = System.Threading.Thread.CurrentThread.CurrentCulture.DateTimeFormat;
-                dateFmt = dateInfo.GetAllDateTimePatterns();
-            }
-            var result = DateTime.TryParseExact(dateTimeStr, dateFmt, CultureInfo.InvariantCulture,
-                           style, out var dt) ? dt : null as DateTime?;
+
+            DateTime? result = null;
+            CultureInfo currentCulture = CultureInfo.CurrentCulture;
+            fmtOut = currentCulture.DateTimeFormat.ShortDatePattern;
+            result = DateTime.TryParse(dateTimeStr, CultureInfo.InvariantCulture,
+                          style, out var dt) ? dt : null as DateTime?;
             return result;
         }
     }
