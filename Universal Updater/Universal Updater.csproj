@@ -35,6 +35,9 @@
   <PropertyGroup>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
+  <PropertyGroup>
+    <ApplicationIcon>Dakirby309-Windows-8-Metro-Other-Update-Metro.256.ico</ApplicationIcon>
+  </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -69,6 +72,9 @@
     <EmbeddedResource Include="Updates\14393.1066.txt" />
     <EmbeddedResource Include="Updates\15063.297.txt" />
     <EmbeddedResource Include="Updates\15254.603.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Dakirby309-Windows-8-Metro-Other-Update-Metro.256.ico" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

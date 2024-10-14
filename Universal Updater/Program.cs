@@ -93,6 +93,12 @@ namespace Universal_Updater
                     {
                         string formattedErrorCode = "0x" + exitCode.ToString("X");
                         ConsoleStyle($"Cannot read device info ({formattedErrorCode}), retrying . . .", 0, ConsoleColor.Red);
+                        if(formattedErrorCode == "0x8000FFFF")
+                        {
+                            // Usually appear if device is not connected
+                            WriteLine("");
+                            WriteLine("Ensure the device is connected properly", ConsoleColor.Red);
+                        }
                         // Give user more time to read and copy error
                         await Task.Delay(3000);
                     }
@@ -126,6 +132,8 @@ namespace Universal_Updater
 
             WriteLine("\nAVAILABLE UPDATES", ConsoleColor.DarkGray);
             WriteLine(availableUpdates);
+
+            var packagesReady = false;
 
             Write("Choice: ", ConsoleColor.Magenta);
             if (CheckForUpdates.Choice == 7)
@@ -221,7 +229,7 @@ namespace Universal_Updater
                     }
 
                     WriteLine("\nPREPARING PACKAGES", ConsoleColor.DarkGray);
-                    DownloadPackages.OfflineUpdate(folderFiles, featureChoice.KeyChar.ToString().ToUpper());
+                    packagesReady = DownloadPackages.OfflineUpdate(folderFiles, featureChoice.KeyChar.ToString().ToUpper());
                 }
                 else
                 {
@@ -280,27 +288,34 @@ namespace Universal_Updater
                 }
 
                 ConsoleStyle("\nDOWNLOADING PACKAGES", 1, ConsoleColor.DarkGray);
-                await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1]);
+                packagesReady = await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1]);
             }
 
-            Write("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
-            PushPackages.StartUpdate();
-            await Task.Delay(15000);
-            if (!PushPackages.updateProcess.HasExited)
+            if (packagesReady)
             {
-                var commonErrors = "\n\nCommon Errors:";
-                commonErrors += "\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
-                commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
-                commonErrors += "\n\n0x80188302: Package already present on the image";
-                commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
-                commonErrors += "\n\n0x80188306: File Collision or Not Found\nSolution: ensure list match InstalledPackages.csv";
-                commonErrors += "\n\n0x80188307: Package DSM; or contents are invalid\nSolution: Keep only one type in the folder CBS or SPKG,\nChoose the correct packages type";
-                commonErrors += "\n\n0x80188308: Not enough space";
-                commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
-                commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
-                commonErrors += "\n\n0x802A0006: Try with another PC";
+                Write("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
+                PushPackages.StartUpdate();
+                await Task.Delay(10000);
+                if (!PushPackages.updateProcess.HasExited)
+                {
+                    var commonErrors = "\n\nCommon Errors:";
+                    commonErrors += "\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
+                    commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
+                    commonErrors += "\n\n0x80188302: Package already present on the image";
+                    commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
+                    commonErrors += "\n\n0x80188306: File Collision or Not Found\nSolution: ensure list match InstalledPackages.csv";
+                    commonErrors += "\n\n0x80188307: Package DSM; or contents are invalid\nSolution: Keep only one type in the folder CBS or SPKG,\nChoose the correct packages type";
+                    commonErrors += "\n\n0x80188308: Not enough space";
+                    commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
+                    commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
+                    commonErrors += "\n\n0x802A0006: Try with another PC";
 
-                MessageBox((IntPtr)0, $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}", "Universal Updater.exe", 0);
+                    MessageBox((IntPtr)0, $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}", "Universal Updater.exe", 0);
+                }
+            }
+            else
+            {
+                WriteLine("\nOperation cancelled", ConsoleColor.Red);
             }
             return;
         }
