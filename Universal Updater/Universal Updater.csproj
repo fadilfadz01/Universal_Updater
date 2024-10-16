@@ -67,6 +67,9 @@
     </None>
   </ItemGroup>
   <ItemGroup>
+    <None Include="Resources\iutool.bat">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include="Resources\wget.exe">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

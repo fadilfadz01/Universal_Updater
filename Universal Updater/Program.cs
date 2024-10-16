@@ -10,6 +10,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Universal_Updater
 {
@@ -25,6 +26,7 @@ namespace Universal_Updater
         public static string tempDirectory = "Temp";
         public static string toolsDirectory = "Resources";
         public static string filteredDirectory = $@"{Environment.CurrentDirectory}\Filtered";
+        public static string logFile = $@"{Environment.CurrentDirectory}\Logs\universal_updater.txt";
 
         public Program()
         {
@@ -34,17 +36,39 @@ namespace Universal_Updater
             }
         }
 
+        public static void appendLog(string text)
+        {
+            try
+            {
+                File.AppendAllText(Program.logFile, text);
+            }
+            catch (Exception e)
+            {
+            }
+        }
         public static void WriteLine(string text, ConsoleColor color = ConsoleColor.White)
         {
             Console.ForegroundColor = color;
             Console.WriteLine(text);
             Console.ResetColor();
+            appendLog(text + Environment.NewLine);
         }
         public static void Write(string text, ConsoleColor color = ConsoleColor.White)
         {
             Console.ForegroundColor = color;
             Console.Write(text);
             Console.ResetColor();
+            appendLog(text);
+        }
+        public static void resetCursorPosition()
+        {
+            if (Console.CursorTop > 0)
+                Console.SetCursorPosition(0, Console.CursorTop - 1);
+            else
+                Console.SetCursorPosition(0, 0);
+
+            Console.Write(new string(' ', Console.WindowWidth));
+            Console.SetCursorPosition(0, Console.CursorTop - 1);
         }
         static async Task retryWithCount(int count = 3)
         {
@@ -54,8 +78,23 @@ namespace Universal_Updater
                 await Task.Delay(1000);
             }
         }
+        public static string prepareLogFile(string toolName)
+        {
+            string logFile = toolName;
+            string directoryPath = $@"{Environment.CurrentDirectory}\Logs";
+            if (!Directory.Exists(directoryPath))
+            {
+                Directory.CreateDirectory(directoryPath);
+            }
+            logFile = directoryPath + $@"\{toolName}_" + DateTime.Now.ToString("yyyy.MM.dd_HH.mm.ss") + ".txt";
+
+            return logFile;
+        }
+
         static async void StartUpdater()
         {
+            logFile = prepareLogFile("universal_updater.exe");
+
             //Extract important tools if not ready
             string startPath = AppDomain.CurrentDomain.BaseDirectory;
             string zipPath = Path.Combine(startPath, @"Resources\i386.zip");
@@ -306,58 +345,72 @@ namespace Universal_Updater
                 packagesReady = await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1]);
             }
 
+            string messageBoxText = "";
             if (packagesReady)
             {
                 if (!pushToFFU)
                 {
                     WriteLine("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
                     PushPackages.StartUpdate();
+                    await Task.Delay(2000);
+                    var commonErrors = "\n\nCommon Errors:";
+                    commonErrors += "\n\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
+                    commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
+                    commonErrors += "\n\n0x80188302: Package already present on the image";
+                    commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
+                    commonErrors += "\n\n0x80188306: File Collision or Not Found\nSolution: ensure list match InstalledPackages.csv";
+                    commonErrors += "\n\n0x80188307: Package DSM; or contents are invalid\nSolution: Keep only one type in the folder CBS or SPKG,\nChoose the correct packages type";
+                    commonErrors += "\n\n0x80188308: Not enough space";
+                    commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
+                    commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
+                    commonErrors += "\n\n0x802A0006: Try with another PC";
                     if (!PushPackages.updateProcess.HasExited)
                     {
-                        await Task.Delay(10000);
-                        var commonErrors = "\n\nCommon Errors:";
-                        commonErrors += "\n\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
-                        commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
-                        commonErrors += "\n\n0x80188302: Package already present on the image";
-                        commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
-                        commonErrors += "\n\n0x80188306: File Collision or Not Found\nSolution: ensure list match InstalledPackages.csv";
-                        commonErrors += "\n\n0x80188307: Package DSM; or contents are invalid\nSolution: Keep only one type in the folder CBS or SPKG,\nChoose the correct packages type";
-                        commonErrors += "\n\n0x80188308: Not enough space";
-                        commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
-                        commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
-                        commonErrors += "\n\n0x802A0006: Try with another PC";
-
-                        MessageBox((IntPtr)0, $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}", "Universal Updater.exe", 0);
+                        messageBoxText = $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}";
+                    }
+                    else
+                    {
+                        messageBoxText = $"Error may detected!\n{commonErrors}";
                     }
                 }
                 else
                 {
                     WriteLine("\nPUSHING PACKAGES (FFU)", ConsoleColor.DarkGray);
-                    WriteLine("\n[IMPORTANT]\nDon't interrupt the process until update exit", ConsoleColor.Red);
+                    WriteLine("\n[IMPORTANT]\nDon't interrupt the process until update app exit", ConsoleColor.DarkYellow);
 
                     await Task.Delay(3500);
                     PushPackages.PushToFFU();
+
+                    await Task.Delay(2000);
+                    var commonErrors = "\n\nCommon Errors:";
+                    commonErrors += "\n\n0x80070490: ERROR_NOT_FOUND\nSolution: Ensure you mounted the FFU first";
+                    commonErrors += "\n\n0x80070241: ERROR_INVALID_IMAGE_HASH";
+                    commonErrors += "\n\n0x80188302: Package already present on the image";
+                    commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
                     if (!PushPackages.updateProcess.HasExited)
                     {
-                        await Task.Delay(2000);
-                        var commonErrors = "\n\nCommon Errors:";
-                        commonErrors += "\n\n0x80070490: ERROR_NOT_FOUND\nSolution: Ensure you mounted the FFU first";
-                        commonErrors += "\n\n0x80070241: ERROR_INVALID_IMAGE_HASH";
-                        commonErrors += "\n\n0x80188302: Package already present on the image";
-                        commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
-
-                        MessageBox((IntPtr)0, $"Don't interrupt the process until update exit!\nYou can dismount your FFU once update app finished.\n{commonErrors}", "Universal Updater.exe", 0);
+                        messageBoxText = $"Don't interrupt the process until update app exit!\nYou can dismount your FFU once update app finished.\n{commonErrors}";
                     }
                     else
                     {
                         string formattedErrorCode = "0x" + PushPackages.updateProcess.ExitCode.ToString("X");
-                        WriteLine("\nError detected (updateapp.exe): " + formattedErrorCode, ConsoleColor.Red);
+                        WriteLine($"\nError detected (updateapp.exe): {formattedErrorCode}\n", ConsoleColor.Red);
+                        messageBoxText = $"Error may detected!.\n{commonErrors}";
                     }
                 }
             }
             else
             {
-                WriteLine("\nOperation cancelled", ConsoleColor.Red);
+                WriteLine("\nOperation cancelled\n", ConsoleColor.Red);
+            }
+
+            resetCursorPosition();
+            var previewLogFile = logFile.Replace($@"{Environment.CurrentDirectory}\", "");
+            WriteLine($"Finished.\n\nFor more details check the logs\n{previewLogFile}", ConsoleColor.DarkGray);
+
+            if (messageBoxText.Length > 0)
+            {
+                MessageBox((IntPtr)0, messageBoxText, "Universal Updater.exe", 0);
             }
             return;
         }

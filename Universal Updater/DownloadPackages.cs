@@ -121,7 +121,7 @@ namespace Universal_Updater
                     packagesType = Console.ReadKey(true);
                 }
                 while (packagesType.KeyChar != '1' && packagesType.KeyChar != '2');
-                Console.Write(packagesType.KeyChar.ToString() + "\n");
+                Program.Write(packagesType.KeyChar.ToString() + "\n");
                 filterCBSPackagesOnly = packagesType.KeyChar == '1';
             }
             else
@@ -141,7 +141,7 @@ namespace Universal_Updater
                 packagesFilterAction = Console.ReadKey(true);
             }
             while (packagesFilterAction.KeyChar != '1' && packagesFilterAction.KeyChar != '2');
-            Console.Write(packagesFilterAction.KeyChar.ToString() + "\n");
+            Program.Write(packagesFilterAction.KeyChar.ToString() + "\n");
 
             var targetExtensionList = getExtensionsList();
             var previewType = "cbs";
@@ -363,12 +363,14 @@ namespace Universal_Updater
                     packagesAction = Console.ReadKey(true);
                 }
                 while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2' && packagesAction.KeyChar != '3');
-                Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                Program.Write(packagesAction.KeyChar.ToString() + "\n");
 
+                Program.WriteLine("\n[PREPARING]\nPlease wait...", ConsoleColor.DarkYellow);
                 if (packagesAction.KeyChar == '1')
                 {
                     for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
                     {
+                        Program.resetCursorPosition();
                         Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
                         File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
                     }
@@ -377,6 +379,7 @@ namespace Universal_Updater
                 {
                     for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
                     {
+                        Program.resetCursorPosition();
                         Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
                         File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
                     }
@@ -401,7 +404,7 @@ namespace Universal_Updater
                     packagesAction = Console.ReadKey(true);
                 }
                 while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
-                Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                Program.Write(packagesAction.KeyChar.ToString() + "\n");
                 if (packagesAction.KeyChar == '1')
                 {
                     Program.WriteLine("");
@@ -422,10 +425,13 @@ namespace Universal_Updater
             Process downloadProcess = new Process();
             downloadProcess.StartInfo.FileName = Program.toolsDirectory + @"\wget.exe";
             downloadProcess.StartInfo.UseShellExecute = false;
+
+            Program.WriteLine("\n[OUTPUT] (wget.exe)\nPlease wait...", ConsoleColor.DarkYellow);
             for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
             {
                 downloadFile = new Uri(filteredPackages[i]);
-                Console.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {downloadFile.LocalPath.Split('/').Last()}");
+                Program.resetCursorPosition();
+                Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {downloadFile.LocalPath.Split('/').Last()}", ConsoleColor.DarkGray);
                 if (update == "15254.603")
                 {
                     downloadProcess.StartInfo.Arguments = $@"{downloadFile} --spider";
