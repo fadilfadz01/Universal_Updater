@@ -19,7 +19,9 @@ namespace Universal_Updater
             int timeout = calculateTimeout(packagesPath);
 
             updateProcess = new Process();
-            // We use out wrapper to handle logs
+            // We use our wrapper to handle logs
+            // this is prepared at iutool.bat but not implemented to write logs to file yet
+            // generally update issues depends on getdulogs rather than this
             var iutoolPath = Program.toolsDirectory + $@"\i386\iutool.exe";
             updateProcess.StartInfo.FileName = Program.toolsDirectory + $@"\iutool.bat";
             updateProcess.StartInfo.Arguments = $"\"{iutoolPath}\" \"{packagesPath}\" \"{Program.logFile}\"";
