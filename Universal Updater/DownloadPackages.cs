@@ -16,7 +16,7 @@ namespace Universal_Updater
     class DownloadPackages
     {
         static Tuple<DateTime, long, long> DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.MinValue, 0, 0);
-        static string[] installedPackages = File.ReadAllLines(@"C:\ProgramData\Universal Updater\InstalledPackages.csv");
+        static string[] installedPackages = File.ReadAllLines(Program.tempDirectory + @"\InstalledPackages.csv");
         static List<string> filteredPackages = new List<string>();
         static bool isFeatureInstalled = false;
         static bool filterCBSPackagesOnly = false;
@@ -83,6 +83,7 @@ namespace Universal_Updater
         {
         filterPackages:
             filteredPackages.Clear();
+            Program.pushToFFU = false;
             var folderHasCBS = false;
             var folderHasSPKG = false;
             for (int i = 0; i < packageCBSExtension.Length; i++)
@@ -353,14 +354,15 @@ namespace Universal_Updater
                 Program.Write("\nTotal expected packages: ", ConsoleColor.DarkGray);
                 Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
                 Program.WriteLine("1. Push packages", ConsoleColor.Green);
-                Program.WriteLine("2. Retry");
+                Program.WriteLine("2. Push to FFU", ConsoleColor.Blue);
+                Program.WriteLine("3. Retry");
                 Program.Write("Choice: ", ConsoleColor.Magenta);
                 ConsoleKeyInfo packagesAction;
                 do
                 {
                     packagesAction = Console.ReadKey(true);
                 }
-                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2' && packagesAction.KeyChar != '3');
                 Console.Write(packagesAction.KeyChar.ToString() + "\n");
 
                 if (packagesAction.KeyChar == '1')
@@ -368,8 +370,18 @@ namespace Universal_Updater
                     for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
                     {
                         Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
-                        File.Copy(filteredPackages[i], $@"{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
+                        File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
                     }
+                }
+                else if (packagesAction.KeyChar == '2')
+                {
+                    for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
+                    {
+                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
+                        File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
+                    }
+
+                    Program.pushToFFU = true;
                 }
                 else
                 {
@@ -408,7 +420,7 @@ namespace Universal_Updater
         {
             WebClient client = new WebClient();
             Process downloadProcess = new Process();
-            downloadProcess.StartInfo.FileName = @"C:\ProgramData\Universal Updater\wget.exe";
+            downloadProcess.StartInfo.FileName = Program.toolsDirectory + @"\wget.exe";
             downloadProcess.StartInfo.UseShellExecute = false;
             for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
             {
@@ -426,7 +438,7 @@ namespace Universal_Updater
                     var fileSize = Convert.ToInt64(logOutput.Where(j => j.IndexOf("Length:", StringComparison.OrdinalIgnoreCase) >= 0).ToArray()[0].Split(' ')[1]);
                     do
                     {
-                        downloadProcess.StartInfo.Arguments = $@"-q -c -P ""{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages"" {downloadFile} --no-check-certificate --show-progress";
+                        downloadProcess.StartInfo.Arguments = $@"-q -c -P """ + Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages"" {downloadFile} --no-check-certificate --show-progress";
                         downloadProcess.StartInfo.RedirectStandardOutput = false;
                         downloadProcess.StartInfo.RedirectStandardError = false;
                         downloadProcess.StartInfo.RedirectStandardInput = false;
@@ -434,7 +446,7 @@ namespace Universal_Updater
                         Console.Title = "Universal Updater.exe";
                         downloadProcess.WaitForExit();
                     }
-                    while (fileSize != new FileInfo($@"{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}").Length);
+                    while (fileSize != new FileInfo(Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}").Length);
                 }
                 else
                 {
@@ -444,10 +456,10 @@ namespace Universal_Updater
                     do
                     {
                         client.DownloadProgressChanged += DownloadProgressChanged;
-                        await client.DownloadFileTaskAsync(downloadFile, $@"{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}");
+                        await client.DownloadFileTaskAsync(downloadFile, Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}");
                         Console.Title = "Universal Updater.exe";
                     }
-                    while (fileSize != new FileInfo($@"{Environment.CurrentDirectory}\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}").Length);
+                    while (fileSize != new FileInfo(Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}").Length);
                 }
             }
 

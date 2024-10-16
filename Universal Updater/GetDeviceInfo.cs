@@ -22,8 +22,8 @@ namespace Universal_Updater
         public static int GetLog()
         {
             getDeviceInfoProcess = new Process();
-            getDeviceInfoProcess.StartInfo.FileName = @"C:\ProgramData\Universal Updater\getdulogs.exe";
-            getDeviceInfoProcess.StartInfo.Arguments = @"-o ""C:\ProgramData\Universal Updater\DeviceLog.cab""";
+            getDeviceInfoProcess.StartInfo.FileName = Program.toolsDirectory + @"\i386\getdulogs.exe";
+            getDeviceInfoProcess.StartInfo.Arguments = @"-o """ + Program.tempDirectory + @"\DeviceLog.cab""";
             getDeviceInfoProcess.StartInfo.RedirectStandardOutput = true;
             getDeviceInfoProcess.StartInfo.RedirectStandardError = true;
             getDeviceInfoProcess.StartInfo.RedirectStandardInput = true;
@@ -47,23 +47,23 @@ namespace Universal_Updater
             getDeviceInfoProcess.Start();
             getDeviceInfoProcess.WaitForExit();
             string logOutput = await getDeviceInfoProcess.StandardOutput.ReadToEndAsync();
-            File.WriteAllText(@"C:\ProgramData\Universal Updater\DeviceInfo.txt", logOutput);
-            CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "OEMDevicePlatform.xml", @"C:\ProgramData\Universal Updater\OEMDevicePlatform.xml");
+            File.WriteAllText(Program.tempDirectory + @"\DeviceInfo.txt", logOutput);
+            CabExtractor.ExtractFile(Program.tempDirectory + @"\DeviceLog.cab", "OEMDevicePlatform.xml", Program.tempDirectory + @"\OEMDevicePlatform.xml");
             try
             {
-                CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "UsoTroubleshooting.reg", @"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg");
+                CabExtractor.ExtractFile(Program.tempDirectory + @"\DeviceLog.cab", "UsoTroubleshooting.reg", Program.tempDirectory + @"\UsoTroubleshooting.reg");
             }
             catch (FileNotFoundException) { }
             try
             {
-                CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "DuTroubleshooting.reg", @"C:\ProgramData\Universal Updater\DuTroubleshooting.reg");
+                CabExtractor.ExtractFile(Program.tempDirectory + @"\DeviceLog.cab", "DuTroubleshooting.reg", Program.tempDirectory + @"\DuTroubleshooting.reg");
             }
             catch (FileNotFoundException) { }
-            CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "InstalledPackages.csv", @"C:\ProgramData\Universal Updater\InstalledPackages.csv");
-            CabExtractor.ExtractFile(@"C:\ProgramData\Universal Updater\DeviceLog.cab", "OEMInput.xml", @"C:\ProgramData\Universal Updater\OEMInput.xml");
+            CabExtractor.ExtractFile(Program.tempDirectory + @"\DeviceLog.cab", "InstalledPackages.csv", Program.tempDirectory + @"\InstalledPackages.csv");
+            CabExtractor.ExtractFile(Program.tempDirectory + @"\DeviceLog.cab", "OEMInput.xml", Program.tempDirectory + @"\OEMInput.xml");
             deviceInfo = new string[deviceDetails.Length + 4];
-            SerialNumber = File.ReadAllLines(@"C:\ProgramData\Universal Updater\DeviceInfo.txt").Where(i => i.Contains("Serial:")).ToArray();
-            string[] platID = File.ReadAllLines(@"C:\ProgramData\Universal Updater\OEMDevicePlatform.xml").Where(i => i.Contains("<DevicePlatformID>")).ToArray();
+            SerialNumber = File.ReadAllLines(Program.tempDirectory + @"\DeviceInfo.txt").Where(i => i.Contains("Serial:")).ToArray();
+            string[] platID = File.ReadAllLines(Program.tempDirectory + @"\OEMDevicePlatform.xml").Where(i => i.Contains("<DevicePlatformID>")).ToArray();
             deviceInfo[0] = SerialNumber[0];
             SerialNumber[0] = $@"{SerialNumber[0].Split(':')[1].Replace(" ", null)}";
             deviceInfo[1] = "PlatformID: " + platID[0].Split('>')[1].Split('<')[0];
@@ -76,7 +76,7 @@ namespace Universal_Updater
                 {
                     try
                     {
-                        OSVersion = File.ReadAllLines(@"C:\ProgramData\Universal Updater\InstalledPackages.csv").Where(k => k.ContainsAny(checkTagsArray)).ToArray();
+                        OSVersion = File.ReadAllLines(Program.tempDirectory + @"\InstalledPackages.csv").Where(k => k.ContainsAny(checkTagsArray)).ToArray();
                     }
                     catch (FileNotFoundException)
                     {
@@ -86,8 +86,8 @@ namespace Universal_Updater
                     j++;
                 }
                 string[] details = null;
-                if (File.Exists(@"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg")) details = File.ReadAllLines(@"C:\ProgramData\Universal Updater\UsoTroubleshooting.reg").Where(l => l.Contains(deviceDetails[i])).ToArray();
-                else if (File.Exists(@"C:\ProgramData\Universal Updater\DuTroubleshooting.reg")) details = File.ReadAllLines(@"C:\ProgramData\Universal Updater\DuTroubleshooting.reg").Where(l => l.Contains(deviceDetails[i])).ToArray(); ;
+                if (File.Exists(Program.tempDirectory + @"\UsoTroubleshooting.reg")) details = File.ReadAllLines(Program.tempDirectory + @"\UsoTroubleshooting.reg").Where(l => l.Contains(deviceDetails[i])).ToArray();
+                else if (File.Exists(Program.tempDirectory + @"\DuTroubleshooting.reg")) details = File.ReadAllLines(Program.tempDirectory + @"\DuTroubleshooting.reg").Where(l => l.Contains(deviceDetails[i])).ToArray(); ;
                 if (details.Count() > 0)
                 {
                     deviceInfo[i + j] = details[0].Replace("    ", null).Replace("\"", null).Replace("=", ": ").Replace("Phone", null);
@@ -97,23 +97,23 @@ namespace Universal_Updater
                     deviceInfo[i + j] = deviceDetails[i].Replace("Phone", "") + ": ";
                 }
             }
-            string[] res = File.ReadAllLines(@"C:\ProgramData\Universal Updater\OEMInput.xml").Where(i => i.Contains("<Resolution>")).ToArray();
+            string[] res = File.ReadAllLines(Program.tempDirectory + @"\OEMInput.xml").Where(i => i.Contains("<Resolution>")).ToArray();
             deviceInfo[deviceInfo.Length - 1] = "Resolution: " + res[0].Split('>')[1].Split('<')[0];
-            if (Directory.Exists($@"{Environment.CurrentDirectory}\{SerialNumber[0]}"))
+            if (Directory.Exists(Program.filteredDirectory + $@"\{SerialNumber[0]}"))
             {
-                Directory.Delete($@"{Environment.CurrentDirectory}\{SerialNumber[0]}", true);
-                Directory.CreateDirectory($@"{Environment.CurrentDirectory}\{SerialNumber[0]}\Packages");
+                Directory.Delete(Program.filteredDirectory + $@"\{SerialNumber[0]}", true);
+                Directory.CreateDirectory(Program.filteredDirectory + $@"\{SerialNumber[0]}\Packages");
             }
             else
             {
-                Directory.CreateDirectory($@"{Environment.CurrentDirectory}\{SerialNumber[0]}\Packages");
+                Directory.CreateDirectory(Program.filteredDirectory + $@"\{SerialNumber[0]}\Packages");
             }
-            File.Copy(@"C:\ProgramData\Universal Updater\DeviceLog.cab", $@"{Environment.CurrentDirectory}\{SerialNumber[0]}\DeviceLog.cab");
+            File.Copy(Program.tempDirectory + @"\DeviceLog.cab", Program.filteredDirectory + $@"\{SerialNumber[0]}\DeviceLog.cab");
             for (int i = 0; i < deviceInfo.Length; i++)
             {
                 var splitDetails = deviceInfo[i].Split(':');
                 deviceInfo[i] = splitDetails[0] + ":" + spaceAlign[i] + splitDetails[1];
-                File.AppendAllText($@"{Environment.CurrentDirectory}\{SerialNumber[0]}\DeviceInfo.txt", deviceInfo[i] + "\n");
+                File.AppendAllText(Program.filteredDirectory + $@"\{SerialNumber[0]}\DeviceInfo.txt", deviceInfo[i] + "\n");
             }
             return deviceInfo;
         }
