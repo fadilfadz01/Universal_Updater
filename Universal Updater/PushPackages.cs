@@ -405,7 +405,7 @@ namespace Universal_Updater
             {
                 generalAction = Console.ReadKey(true);
             }
-            while (generalAction.KeyChar != '1' && generalAction.KeyChar != '2');
+            while (generalAction.KeyChar != '1' && generalAction.KeyChar != '2' && generalAction.KeyChar != '3');
             Program.Write(generalAction.KeyChar.ToString() + "\n");
 
             return generalAction.KeyChar;
