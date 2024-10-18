@@ -629,11 +629,13 @@ namespace Universal_Updater
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine(" Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion);
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName);
-            Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.WriteLine("This app provided AS-IS without any warranty");
+            Console.WriteLine("- " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName);
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("GitHub: https://github.com/fadilfadz01/Universal_Updater");
+            Console.WriteLine("- Contributors: Bashar Astifan");
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("- This app provided AS-IS without any warranty");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("- GitHub: https://github.com/fadilfadz01/Universal_Updater");
 
             Console.WriteLine(string.Empty);
             Console.ForegroundColor = color;
