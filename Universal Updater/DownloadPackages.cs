@@ -16,12 +16,12 @@ namespace Universal_Updater
     class DownloadPackages
     {
         static Tuple<DateTime, long, long> DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.MinValue, 0, 0);
-        static string[] installedPackages = File.ReadAllLines(Program.tempDirectory + @"\InstalledPackages.csv");
+        static string[] installedPackages = Program.useConnectedDevice ? File.ReadAllLines(Program.tempDirectory + @"\InstalledPackages.csv") : new string[] { };
         static List<string> filteredPackages = new List<string>();
         static bool isFeatureInstalled = false;
         static bool filterCBSPackagesOnly = false;
         static readonly string[] knownPackages = { "ms_commsenhancementglobal.mainos", "ms_commsmessagingglobal.mainos", "microsoftphonefm.platformmanifest.efiesp", "microsoftphonefm.platformmanifest.mainos", "microsoftphonefm.platformmanifest.updateos", "UserInstallableFM.PlatformManifest" };
-        static readonly string[] featurePackages = { "MS_RCS_FEATURE_PACK.MainOS.cbsr", "ms_projecta.mainos" };
+        static readonly string[] featurePackages = { "MS_RCS_FEATURE_PACK.MainOS.cbsr", "ms_projecta.mainos", "arcadia.services.mainos", "arcadia.drivers.mainos" , "projecta.arcadia.mainos" };
         static readonly string[] skippedPackages = { };
         static readonly string[] packageCBSExtension = { ".cab", ".cbs_" };
         static readonly string[] packageSPKGExtension = { ".spkg", ".spkg_" };
@@ -44,6 +44,7 @@ namespace Universal_Updater
 
             // Get file content only once
             var targetListFile = Program.GetResourceFile($"{updateBuild}.txt").Split('\n');
+            Program.appendLog("\n[INSTALLED PACKAGES]\n");
             for (int i = 1; i < installedPackages.Length; i++)
             {
                 for (int j = 0; j < targetExtensionList.Length; j++)
@@ -61,6 +62,7 @@ namespace Universal_Updater
                         }
                     }
                 }
+                Program.appendLog($"{installedPackages[i]}\n");
             }
             for (int i = 0; i < knownPackages.Length; i++)
             {
@@ -83,7 +85,6 @@ namespace Universal_Updater
         {
         filterPackages:
             filteredPackages.Clear();
-            Program.pushToFFU = false;
             var folderHasCBS = false;
             var folderHasSPKG = false;
             for (int i = 0; i < packageCBSExtension.Length; i++)
@@ -130,18 +131,21 @@ namespace Universal_Updater
                 filterCBSPackagesOnly = folderHasCBS;
             }
 
-            // Allow user to push all package if he want
-            Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
-            Program.WriteLine("1. Filter packages", ConsoleColor.Green);
-            Program.WriteLine("2. Include all", ConsoleColor.DarkYellow);
-            Program.Write("Choice: ", ConsoleColor.Magenta);
-            ConsoleKeyInfo packagesFilterAction;
-            do
+            ConsoleKeyInfo packagesFilterAction = default(ConsoleKeyInfo);
+            if (Program.useConnectedDevice)
             {
-                packagesFilterAction = Console.ReadKey(true);
+                // Allow user to push all package if he want
+                Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
+                Program.WriteLine("1. Filter packages", ConsoleColor.Green);
+                Program.WriteLine("2. Include all", ConsoleColor.DarkYellow);
+                Program.Write("Choice: ", ConsoleColor.Magenta);
+                do
+                {
+                    packagesFilterAction = Console.ReadKey(true);
+                }
+                while (packagesFilterAction.KeyChar != '1' && packagesFilterAction.KeyChar != '2');
+                Program.Write(packagesFilterAction.KeyChar.ToString() + "\n");
             }
-            while (packagesFilterAction.KeyChar != '1' && packagesFilterAction.KeyChar != '2');
-            Program.Write(packagesFilterAction.KeyChar.ToString() + "\n");
 
             var targetExtensionList = getExtensionsList();
             var previewType = "cbs";
@@ -150,25 +154,40 @@ namespace Universal_Updater
                 previewType = "spkg";
             }
 
-            if (packagesFilterAction.KeyChar == '1')
+            if (!Program.useConnectedDevice || packagesFilterAction.KeyChar == '1')
             {
                 Program.WriteLine($"\nFiltering packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
-
-                for (int i = 0; i < installedPackages.Length; i++)
+                if (Program.useConnectedDevice)
                 {
-                    for (int j = 0; j < targetExtensionList.Length; j++)
+                    Program.appendLog("\n[INSTALLED PACKAGES]\n");
+                    for (int i = 0; i < installedPackages.Length; i++)
                     {
-                        var checkName = installedPackages[i].Split(',')[1] + targetExtensionList[j];
-                        var requiredPackages = folderFiles.Where(k => k.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                        if (requiredPackages != null)
+                        for (int j = 0; j < targetExtensionList.Length; j++)
                         {
-                            if (!shouldSkip(requiredPackages))
+                            var checkName = installedPackages[i].Split(',')[1] + targetExtensionList[j];
+                            var requiredPackages = folderFiles.Where(k => k.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                            if (requiredPackages != null)
                             {
-                                filteredPackages.Add(requiredPackages);
+                                if (!shouldSkip(requiredPackages))
+                                {
+                                    filteredPackages.Add(requiredPackages);
+                                }
                             }
+                        }
+                        Program.appendLog($"{installedPackages[i]}\n");
+                    }
+                }
+                else
+                {
+                    foreach (var package in folderFiles)
+                    {
+                        if (!shouldSkip(package))
+                        {
+                            filteredPackages.Add(package);
                         }
                     }
                 }
+
                 for (int i = 0; i < knownPackages.Length; i++)
                 {
                     if (string.Join("\n", filteredPackages).IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) < 0)
@@ -279,9 +298,21 @@ namespace Universal_Updater
                     Program.Write("Issuer : ", ConsoleColor.DarkGray);
                     Program.WriteLine(certificateIssuer, ConsoleColor.DarkCyan);
                     Program.Write("Date   : ", ConsoleColor.DarkGray);
-                    Program.Write(certificateDate.ToDate(ref dtFmt).Value.ToString("d"), ConsoleColor.DarkGray);
-                    Program.Write(" - ", ConsoleColor.DarkGray);
-                    Program.WriteLine(certificateExpireDate.ToDate(ref dtFmt).Value.ToString("d"), ConsoleColor.DarkGray);
+
+                    var startData = certificateDate.ToDate(ref dtFmt);
+                    var expireData = certificateExpireDate.ToDate(ref dtFmt);
+                    if (startData != null && startData.HasValue)
+                    {
+                        Program.Write(startData.Value.ToString("d"), ConsoleColor.DarkGray);
+                        Program.Write(" - ", ConsoleColor.DarkGray);
+                        Program.WriteLine(expireData.Value.ToString("d"), ConsoleColor.DarkGray);
+                    }
+                    else
+                    {
+                        Program.Write(certificateDate, ConsoleColor.DarkGray);
+                        Program.Write(" - ", ConsoleColor.DarkGray);
+                        Program.WriteLine(certificateExpireDate, ConsoleColor.DarkGray);
+                    }
                     Program.Write("Type   : ", ConsoleColor.DarkGray);
 
                     // Currently we do basic check using [Issuer]
@@ -328,41 +359,41 @@ namespace Universal_Updater
                 {
                 }
 
-
                 if (formatedDate != null && formatedDate.HasValue)
                 {
                     var dateOnly = formatedDate.Value.Date;
                     Program.Write("Files  : " + dateOnly.ToString("d"), ConsoleColor.DarkGray);
                     var datePlusTwoDays = dateOnly.AddDays(2);
                     Program.WriteLine($" ({dtFmt})", ConsoleColor.DarkGray);
-
-                    if (isTestSigned)
+                    if (!Program.pushToFFU)
                     {
-                        // Show this red label if we expect that packages are test signed
-                        Program.Write("\n[IMPORTANT] ", ConsoleColor.DarkRed);
-                        Program.Write("\nPackages expected to be ", ConsoleColor.DarkYellow);
-                        Program.WriteLine("(Test Signed)", ConsoleColor.Blue);
-                        Program.WriteLine("Set your device to the required date", ConsoleColor.DarkYellow);
+                        if (isTestSigned)
+                        {
+                            // Show this red label if we expect that packages are test signed
+                            Program.Write("\n[IMPORTANT] ", ConsoleColor.DarkRed);
+                            Program.Write("\nPackages expected to be ", ConsoleColor.DarkYellow);
+                            Program.WriteLine("(Test Signed)", ConsoleColor.Blue);
+                            Program.WriteLine("Set your device to the required date", ConsoleColor.DarkYellow);
+                        }
                     }
                 }
                 else
                 {
-                    Program.WriteLine("\nCould not parse date: " + dateModifiedString, ConsoleColor.DarkGray);
-                    Program.WriteLine("(Ignore this if packages are not test signed)", ConsoleColor.DarkGray);
+                    Program.Write("Files  : " + dateModifiedString, ConsoleColor.DarkGray);
+                    Program.WriteLine($" ({dtFmt})", ConsoleColor.DarkGray);
                 }
 
                 Program.Write("\nTotal expected packages: ", ConsoleColor.DarkGray);
                 Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
                 Program.WriteLine("1. Push packages", ConsoleColor.Green);
-                Program.WriteLine("2. Push to FFU", ConsoleColor.Blue);
-                Program.WriteLine("3. Retry");
+                Program.WriteLine("2. Retry");
                 Program.Write("Choice: ", ConsoleColor.Magenta);
                 ConsoleKeyInfo packagesAction;
                 do
                 {
                     packagesAction = Console.ReadKey(true);
                 }
-                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2' && packagesAction.KeyChar != '3');
+                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
                 Program.Write(packagesAction.KeyChar.ToString() + "\n");
 
                 Program.WriteLine("\n[PREPARING]\nPlease wait...", ConsoleColor.DarkYellow);
@@ -374,17 +405,6 @@ namespace Universal_Updater
                         Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
                         File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
                     }
-                }
-                else if (packagesAction.KeyChar == '2')
-                {
-                    for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
-                    {
-                        Program.resetCursorPosition();
-                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
-                        File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
-                    }
-
-                    Program.pushToFFU = true;
                 }
                 else
                 {

@@ -6,7 +6,7 @@ namespace Universal_Updater
 {
     class CheckForUpdates
     {
-        public static int Choice { get; private set; }
+        public static int Choice { get; set; }
 
         public static string AvailableUpdates()
         {

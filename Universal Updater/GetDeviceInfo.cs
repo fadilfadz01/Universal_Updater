@@ -19,6 +19,23 @@ namespace Universal_Updater
         public static string[] OSVersion { get; private set; }
         public static string[] SerialNumber { get; private set; }
 
+        public static void Offline()
+        {
+            if (!Program.useConnectedDevice)
+            {
+                SerialNumber = new string[] { "Dummy" };
+                if (Directory.Exists(Program.filteredDirectory + $@"\{SerialNumber[0]}"))
+                {
+                    Directory.Delete(Program.filteredDirectory + $@"\{SerialNumber[0]}", true);
+                    Directory.CreateDirectory(Program.filteredDirectory + $@"\{SerialNumber[0]}\Packages");
+                }
+                else
+                {
+                    Directory.CreateDirectory(Program.filteredDirectory + $@"\{SerialNumber[0]}\Packages");
+                }
+            }
+        }
+
         public static int GetLog()
         {
             getDeviceInfoProcess = new Process();

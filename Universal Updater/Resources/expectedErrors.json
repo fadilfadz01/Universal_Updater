@@ -1,0 +1,12 @@
+{
+  "updateapp.exe": [
+    {
+      "argument": "iutocbsfromupdateoutput",
+      "errors": [ "0x80070002" ]
+    },
+    {
+      "argument": "install",
+      "errors": [ "0x80004001" ]
+    }
+  ]
+}
