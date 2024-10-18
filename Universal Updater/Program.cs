@@ -2,13 +2,17 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Universal_Updater
 {
@@ -19,7 +23,16 @@ namespace Universal_Updater
         public static ConsoleKeyInfo selectedUpdate;
         static ConsoleKeyInfo featureChoice;
         private static string packagePath;
+        public static bool pushToFFU = false;
+        public static string FFUPath = null;
         static readonly string[,] updateStructure = { { null, null, null }, { "13016.108", "13080.107", "Offline" }, { "13037.0", "Offline", null }, { "14393.1066", "Offline", null }, { "15063.297", "15254.603", "Offline" }, { "15254.603", "Offline", null }, { "Offline", null, null } };
+        public static string tempDirectory = "Temp";
+        public static string toolsDirectory = "Resources";
+        public static string filteredDirectory = $@"{Environment.CurrentDirectory}\Filtered";
+        public static string logFile = $@"{Environment.CurrentDirectory}\Logs\universal_updater.txt";
+
+        // For testing only without device
+        public static bool useConnectedDevice = true;
 
         public Program()
         {
@@ -29,17 +42,78 @@ namespace Universal_Updater
             }
         }
 
-        public static void WriteLine(string text, ConsoleColor color = ConsoleColor.White)
+        public static void appendLog(string text)
         {
-            Console.ForegroundColor = color;
-            Console.WriteLine(text);
-            Console.ResetColor();
+            try
+            {
+                File.AppendAllText(Program.logFile, text);
+            }
+            catch (Exception e)
+            {
+            }
         }
-        public static void Write(string text, ConsoleColor color = ConsoleColor.White)
+        public static void WriteLine(string text, ConsoleColor color = ConsoleColor.White, bool trimPreviewIfLong = false)
         {
             Console.ForegroundColor = color;
-            Console.Write(text);
+            if (trimPreviewIfLong)
+            {
+                WriteTrimmedLine(text);
+            }
+            else
+            {
+                Console.WriteLine(text);
+            }
             Console.ResetColor();
+            appendLog(text + Environment.NewLine);
+        }
+        public static void Write(string text, ConsoleColor color = ConsoleColor.White, bool trimPreviewIfLong = false)
+        {
+            Console.ForegroundColor = color;
+            if (trimPreviewIfLong)
+            {
+                WriteTrimmedLine(text, false);
+            }
+            else
+            {
+                Console.Write(text);
+            }
+            Console.ResetColor();
+            appendLog(text);
+        }
+        public static void WriteTrimmedLine(string text, bool writeLine = true)
+        {
+            // Get the current console window width
+            int consoleWidth = (int)Math.Round(Console.WindowWidth * 0.95);
+
+            // Calculate the maximum allowed length considering space for '...'
+            const int ellipsisLength = 3;
+            int maxAllowedLength = consoleWidth - ellipsisLength;
+
+            if (text.Length > maxAllowedLength)
+            {
+                // If text is too long, trim and add ellipses
+                text = text.Substring(0, maxAllowedLength) + "...";
+            }
+
+            if (writeLine)
+            {
+                Console.WriteLine(text);
+            }
+            else
+            {
+                Console.Write(text);
+            }
+        }
+
+        public static void resetCursorPosition()
+        {
+            if (Console.CursorTop > 0)
+                Console.SetCursorPosition(0, Console.CursorTop - 1);
+            else
+                Console.SetCursorPosition(0, 0);
+
+            Console.Write(new string(' ', Console.WindowWidth));
+            Console.SetCursorPosition(0, Console.CursorTop - 1);
         }
         static async Task retryWithCount(int count = 3)
         {
@@ -49,15 +123,67 @@ namespace Universal_Updater
                 await Task.Delay(1000);
             }
         }
+        public static string prepareLogFile(string toolName)
+        {
+            string logFile = toolName;
+            string directoryPath = $@"{Environment.CurrentDirectory}\Logs";
+            if (!Directory.Exists(directoryPath))
+            {
+                Directory.CreateDirectory(directoryPath);
+            }
+            logFile = directoryPath + $@"\{toolName}_" + DateTime.Now.ToString("yyyy.MM.dd_HH.mm.ss") + ".txt";
+
+            return logFile;
+        }
+
         static async void StartUpdater()
         {
+            logFile = prepareLogFile("universal_updater.exe");
+            appendAppInfoToLog();
+            ConsoleStyle("", 0, ConsoleColor.Blue);
+
+            // Extract important tools if not ready
+            string startPath = AppDomain.CurrentDomain.BaseDirectory;
+            string zipPath = Path.Combine(startPath, @"Resources\i386.zip");
+            string extractPath = Path.Combine(startPath, @"Resources");
+            string hashFilePath = Path.Combine(startPath, @"Resources\hash.txt");
+
+            // Calculate current hash
+            string currentHash = CalculateMD5(zipPath);
+
+            // Read previous hash from file
+            string previousHash = File.Exists(hashFilePath) ? File.ReadAllText(hashFilePath).Trim() : null;
+            if (currentHash != previousHash)
+            {
+                // Tools zip changed and better to re-extract
+                if (Directory.Exists(extractPath + "\\i386"))
+                {
+                    Directory.Delete(extractPath + "\\i386", true);
+                }
+                File.WriteAllText(hashFilePath, currentHash);
+            }
+
+            if (!IsRunningAsAdministrator())
+            {
+                Program.WriteLine("Please start the app as Administrator", ConsoleColor.Red);
+                return;
+            }
+
+            // Check if directory already extracted
+            if (!Directory.Exists(extractPath + "\\i386"))
+            {
+                ConsoleStyle("Extracting resources, please wait...", 0, ConsoleColor.Blue);
+                // Extract the archive
+                ZipFile.ExtractToDirectory(zipPath, extractPath);
+            }
+
             Console.ResetColor();
         cleanTempArea:
-            if (Directory.Exists(@"C:\ProgramData\Universal Updater"))
+            if (Directory.Exists(tempDirectory))
             {
                 try
                 {
-                    Directory.Delete(@"C:\ProgramData\Universal Updater", true);
+                    Directory.Delete(tempDirectory, true);
                 }
                 catch (Exception ex)
                 {
@@ -65,108 +191,208 @@ namespace Universal_Updater
                     ConsoleStyle(ex.Message, 0, ConsoleColor.Red);
                     WriteLine("\nRetrying...", ConsoleColor.DarkYellow);
                     await Task.Delay(5000);
-                    //Give small delay between retries
+                    // Give small delay between retries
                     await retryWithCount(3);
                     goto cleanTempArea;
                 }
             }
-            Directory.CreateDirectory(@"C:\ProgramData\Universal Updater");
-            GetResourceFile("getdulogs.exe", true);
-            GetResourceFile("iutool.exe", true);
-            GetResourceFile("wget.exe", true);
+            Directory.CreateDirectory(tempDirectory);
 
-            ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
-            bool deviceInfoReady = false;
-            while (!deviceInfoReady)
+            // Expected errors simulate check (For testing only)
+            //PushPackages.isErrorExpected("Blabla 0x80070002", "updateapp.exe", "iutocbsfromupdateoutput");
+            //PushPackages.isErrorExpected("Blabla 0x80004001", "updateapp.exe", "iutocbsfromupdateoutput");
+            //PushPackages.isErrorExpected("Blabla 0x80070002", "updateapp.exe", "install .....");
+            //PushPackages.isErrorExpected("Blabla 0x80004001", "updateapp.exe", "install .....");
+
+            // Get update target
+            WriteLine("\n[UPDATE TARGET]: ", ConsoleColor.DarkGray);
+            WriteLine("1. Device", ConsoleColor.Green);
+            WriteLine("2. FFU (W10M)", ConsoleColor.Blue);
+            WriteLine("3. FFU (WP8.1)", ConsoleColor.DarkYellow);
+            Write("Choice: ", ConsoleColor.Magenta);
+            ConsoleKeyInfo updateTargetAction;
+            do
             {
-                ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
-                var exitCode = GetDeviceInfo.GetLog();
-                deviceInfoReady = exitCode == 0;
-                await Task.Delay(1000);
-                if (!deviceInfoReady)
+                updateTargetAction = Console.ReadKey(true);
+            }
+            while (updateTargetAction.KeyChar != '1' && updateTargetAction.KeyChar != '2' && updateTargetAction.KeyChar != '3');
+            Write(updateTargetAction.KeyChar.ToString() + "\n");
+            pushToFFU = updateTargetAction.KeyChar != '1';
+            PushPackages.useOldTools = updateTargetAction.KeyChar == '3';
+
+            if (pushToFFU)
+            {
+            ffuPathArea:
+                // Ask for FFU
+                FFUPath = null;
+                Program.Write("\nEnter FFU path: ", ConsoleColor.DarkYellow);
+                do
                 {
-                    if (exitCode == -1)
+                    FFUPath = Console.ReadLine().Trim('"');
+                }
+                while (FFUPath.Length == 0);
+                if (FFUPath == null || FFUPath.Length == 0 || !File.Exists(FFUPath))
+                {
+                    if (PushPackages.showRetryQuestion("FFU path is not valid or not exist", "Skip", ConsoleColor.Red))
                     {
-                        ConsoleStyle("Read device info (Timeout), retrying . . .", 0, ConsoleColor.Red);
+                        goto ffuPathArea;
                     }
                     else
                     {
-                        string formattedErrorCode = "0x" + exitCode.ToString("X");
-                        ConsoleStyle($"Cannot read device info ({formattedErrorCode}), retrying . . .", 0, ConsoleColor.Red);
-                        if(formattedErrorCode == "0x8000FFFF")
-                        {
-                            // Usually appear if device is not connected
-                            WriteLine("");
-                            WriteLine("Ensure the device is connected properly", ConsoleColor.Red);
-                        }
-                        // Give user more time to read and copy error
-                        await Task.Delay(3000);
+                        pushToFFU = false;
                     }
-                    await Task.Delay(2000);
-                    // Give small delay between retries
-                    await retryWithCount(3);
                 }
             }
 
-            ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
-            var deviceInfo = await GetDeviceInfo.ReadInfo();
-            if (deviceInfo == null)
+            if (pushToFFU)
             {
-                ConsoleStyle("Couldn't read the device information.\nMake sure that you have no pending updates on your phone settings.", 0, ConsoleColor.Red);
-                return;
-            }
-            ConsoleStyle("DEVICE INFORMATIONS", 1, ConsoleColor.DarkGray);
-            foreach (string info in deviceInfo)
-            {
-                WriteLine(info);
-            }
-            string availableUpdates = CheckForUpdates.AvailableUpdates();
-            if (CheckForUpdates.Choice == 1)
-            {
-                WriteLine("\nThe OS version didn't reached the minimum required build.", ConsoleColor.Red);
-                Write("Please update to ", ConsoleColor.Red);
-                Write("'8.10.14219.341'", ConsoleColor.Blue);
-                WriteLine(" at least.", ConsoleColor.Red);
-                return;
+                WriteLine("\n[PACKAGES FILTER SOURCE]", ConsoleColor.DarkGray);
+                WriteLine("1. Device", ConsoleColor.Green);
+                WriteLine("2. None", ConsoleColor.Gray);
+                WriteLine("\n[IMPORTANT]", ConsoleColor.Red);
+                WriteLine("Without device you have to filter your packages correctly", ConsoleColor.Yellow);
+                WriteLine("Filtering packages isn't supported yet without device", ConsoleColor.Yellow);
+
+                Write("Choice: ", ConsoleColor.Magenta);
+                ConsoleKeyInfo filterSourceAction;
+                do
+                {
+                    filterSourceAction = Console.ReadKey(true);
+                }
+                while (filterSourceAction.KeyChar != '1' && filterSourceAction.KeyChar != '2');
+                Write(filterSourceAction.KeyChar.ToString() + "\n");
+                useConnectedDevice = filterSourceAction.KeyChar == '1';
             }
 
-            WriteLine("\nAVAILABLE UPDATES", ConsoleColor.DarkGray);
-            WriteLine(availableUpdates);
+            if (!useConnectedDevice)
+            {
+                GetDeviceInfo.Offline();
+                pushToFFU = true;
+
+                WriteLine("Please wait...", ConsoleColor.Blue);
+                // Give some time so use can have attention to the message
+                await Task.Delay(1500);
+            }
 
             var packagesReady = false;
+            string selectedUpdateOption = "1";
+            if (useConnectedDevice)
+            {
+                ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+                bool deviceInfoReady = false;
+                while (!deviceInfoReady)
+                {
+                    ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+                    var exitCode = GetDeviceInfo.GetLog();
+                    deviceInfoReady = exitCode == 0;
+                    await Task.Delay(1000);
+                    if (!deviceInfoReady)
+                    {
+                        if (exitCode == -1)
+                        {
+                            ConsoleStyle("Read device info (Timeout), retrying . . .", 0, ConsoleColor.Red);
+                        }
+                        else
+                        {
+                            string formattedErrorCode = "0x" + exitCode.ToString("X");
+                            ConsoleStyle($"Cannot read device info ({formattedErrorCode}), retrying . . .", 0, ConsoleColor.Red);
+                            if (formattedErrorCode == "0x8000FFFF")
+                            {
+                                // Usually appear if device is not connected
+                                WriteLine("");
+                                WriteLine("Ensure the device is connected properly", ConsoleColor.Red);
+                            }
+                            // Give user more time to read and copy error
+                            await Task.Delay(3000);
+                        }
+                        await Task.Delay(2000);
+                        // Give small delay between retries
+                        await retryWithCount(3);
+                    }
+                }
 
-            Write("Choice: ", ConsoleColor.Magenta);
-            if (CheckForUpdates.Choice == 7)
-            {
-                do
+                ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+                var deviceInfo = await GetDeviceInfo.ReadInfo();
+                if (deviceInfo == null)
                 {
-                    selectedUpdate = Console.ReadKey(true);
+                    ConsoleStyle("Couldn't read the device information.\nMake sure that you have no pending updates on your phone settings.", 0, ConsoleColor.Red);
+                    printLogLocation();
+                    return;
                 }
-                while (selectedUpdate.KeyChar != '1');
-            }
-            else if (CheckForUpdates.Choice == 3 || CheckForUpdates.Choice == 4 || CheckForUpdates.Choice == 6)
-            {
-                do
+
+
+                ConsoleStyle("TARGET INFORMATIONS", 1, ConsoleColor.DarkGray);
+                foreach (string info in deviceInfo)
                 {
-                    selectedUpdate = Console.ReadKey(true);
+                    WriteLine(info);
                 }
-                while (selectedUpdate.KeyChar != '1' && selectedUpdate.KeyChar != '2');
-            }
-            else if (CheckForUpdates.Choice == 2 || CheckForUpdates.Choice == 5)
-            {
-                do
+                var availableUpdates = CheckForUpdates.AvailableUpdates();
+                if (CheckForUpdates.Choice == 1)
                 {
-                    selectedUpdate = Console.ReadKey(true);
+                    WriteLine("\nThe OS version didn't reached the minimum required build.", ConsoleColor.Red);
+                    Write("Please update to ", ConsoleColor.Red);
+                    Write("'8.10.14219.341'", ConsoleColor.Blue);
+                    WriteLine(" at least.", ConsoleColor.Red);
+                    return;
                 }
-                while (selectedUpdate.KeyChar != '1' && selectedUpdate.KeyChar != '2' && selectedUpdate.KeyChar != '3');
+
+
+                Write("\nPUSH MODE: ", ConsoleColor.Gray);
+
+                WriteLine(pushToFFU ? (PushPackages.useOldTools ? "FFU (WP8.1)" : "FFU (W10M)") : "DEVICE", pushToFFU ? (PushPackages.useOldTools ? ConsoleColor.DarkYellow : ConsoleColor.Blue) : ConsoleColor.Green);
+                if (pushToFFU && !string.IsNullOrEmpty(FFUPath))
+                {
+                    WriteLine($"FFU PATH: {FFUPath}", ConsoleColor.DarkGray);
+                }
+
+                WriteLine("\nAVAILABLE UPDATES", ConsoleColor.DarkGray);
+                WriteLine(availableUpdates);
+
+
+                Write("Choice: ", ConsoleColor.Magenta);
+
+
+                if (CheckForUpdates.Choice == 7)
+                {
+                    do
+                    {
+                        selectedUpdate = Console.ReadKey(true);
+                    }
+                    while (selectedUpdate.KeyChar != '1');
+                }
+                else if (CheckForUpdates.Choice == 3 || CheckForUpdates.Choice == 4 || CheckForUpdates.Choice == 6)
+                {
+                    do
+                    {
+                        selectedUpdate = Console.ReadKey(true);
+                    }
+                    while (selectedUpdate.KeyChar != '1' && selectedUpdate.KeyChar != '2');
+                }
+                else if (CheckForUpdates.Choice == 2 || CheckForUpdates.Choice == 5)
+                {
+                    do
+                    {
+                        selectedUpdate = Console.ReadKey(true);
+                    }
+                    while (selectedUpdate.KeyChar != '1' && selectedUpdate.KeyChar != '2' && selectedUpdate.KeyChar != '3');
+                }
+                else
+                {
+                    WriteLine("\nSomething went wrong.", ConsoleColor.Red);
+                    printLogLocation();
+                    return;
+                }
+                Write(selectedUpdate.KeyChar + "\n");
+
+                selectedUpdateOption = Program.selectedUpdate.KeyChar.ToString();
             }
             else
             {
-                Write("\nSomething went wrong.", ConsoleColor.Red);
-                return;
+                // Fall to offline by default
+                CheckForUpdates.Choice = 7;
             }
-            Write(selectedUpdate.KeyChar + "\n");
-            if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "Offline")
+
+            if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdateOption) - 1] == "Offline")
             {
             packagePathArea:
                 packagePath = "";
@@ -203,6 +429,7 @@ namespace Universal_Updater
                         }
                         else
                         {
+                            printLogLocation();
                             return;
                         }
                     }
@@ -251,6 +478,7 @@ namespace Universal_Updater
                     }
                     else
                     {
+                        printLogLocation();
                         return;
                     }
                 }
@@ -291,15 +519,16 @@ namespace Universal_Updater
                 packagesReady = await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1]);
             }
 
+            string messageBoxText = "";
             if (packagesReady)
             {
-                Write("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
-                PushPackages.StartUpdate();
-                await Task.Delay(10000);
-                if (!PushPackages.updateProcess.HasExited)
+                if (!pushToFFU)
                 {
+                    WriteLine("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
+                    await PushPackages.StartUpdate();
+                    await Task.Delay(2000);
                     var commonErrors = "\n\nCommon Errors:";
-                    commonErrors += "\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
+                    commonErrors += "\n\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
                     commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
                     commonErrors += "\n\n0x80188302: Package already present on the image";
                     commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
@@ -309,17 +538,48 @@ namespace Universal_Updater
                     commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
                     commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
                     commonErrors += "\n\n0x802A0006: Try with another PC";
+                    if (!PushPackages.updateProcess.HasExited)
+                    {
+                        messageBoxText = $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}";
+                    }
+                    else
+                    {
+                        messageBoxText = $"Error may detected!\n{commonErrors}";
+                    }
+                }
+                else
+                {
+                    WriteLine("\nPUSHING PACKAGES (FFU)", ConsoleColor.DarkGray);
+                    await PushPackages.PushToFFU();
 
-                    MessageBox((IntPtr)0, $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}", "Universal Updater.exe", 0);
+                    var commonErrors = "Common Errors:";
+                    commonErrors += "\n\n0x80070490: ERROR_NOT_FOUND\nSolution: Mount the FFU first\nThis also may happen if disk full";
+                    commonErrors += "\n\n0x80070002: ERROR_FILE_NOT_FOUND";
+                    commonErrors += "\n\n0x80070241: ERROR_INVALID_IMAGE_HASH";
+                    commonErrors += "\n\n0x80188302: Package already present on the image";
+                    commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
+                    messageBoxText = $"Ensure to clean system temp after this process\n\n{commonErrors}";
                 }
             }
             else
             {
-                WriteLine("\nOperation cancelled", ConsoleColor.Red);
+                WriteLine("\nOperation cancelled\n", ConsoleColor.Red);
+            }
+
+            printLogLocation();
+
+            if (messageBoxText.Length > 0)
+            {
+                MessageBox((IntPtr)0, messageBoxText, "Universal Updater.exe", 0);
             }
             return;
         }
 
+        static void printLogLocation()
+        {
+            var previewLogFile = logFile.Replace($@"{Environment.CurrentDirectory}\", "");
+            WriteLine($"\nFinished.\n\nFor more details check the logs\n{previewLogFile}", ConsoleColor.DarkGray);
+        }
         static void printRCSMessage()
         {
             WriteLine("Remove RCS feature?");
@@ -339,6 +599,7 @@ namespace Universal_Updater
             Write(" (Y/N): ", ConsoleColor.Magenta);
         }
 
+        [STAThread]
         static void Main(string[] args)
         {
             if (!IsDependenciesInstalled("Microsoft Visual C++ 2012 Redistributable (x86)"))
@@ -368,11 +629,13 @@ namespace Universal_Updater
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine(" Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion);
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName);
-            Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.WriteLine("This app provided AS-IS without any warranty");
+            Console.WriteLine("- " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName);
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("GitHub: https://github.com/fadilfadz01/Universal_Updater");
+            Console.WriteLine("- Contributors: Bashar Astifan");
+            Console.ForegroundColor = ConsoleColor.DarkYellow;
+            Console.WriteLine("- This app provided AS-IS without any warranty");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("- GitHub: https://github.com/fadilfadz01/Universal_Updater");
 
             Console.WriteLine(string.Empty);
             Console.ForegroundColor = color;
@@ -386,6 +649,16 @@ namespace Universal_Updater
             }
         }
 
+        static void appendAppInfoToLog()
+        {
+            appendLog(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName + "\n");
+            appendLog("Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion + "\n");
+            appendLog(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName + "\n");
+            appendLog("This app provided AS-IS without any warranty" + "\n");
+            appendLog("GitHub: https://github.com/fadilfadz01/Universal_Updater" + "\n");
+            appendLog("IUTool: https://learn.microsoft.com/en-us/previous-versions/mt131833(v=vs.85)" + "\n\n");
+        }
+
         public static string GetResourceFile(string resourceName, bool dump = false)
         {
             var embeddedResource = Assembly.GetExecutingAssembly().GetManifestResourceNames().Where(s => s.IndexOf(resourceName, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
@@ -397,7 +670,7 @@ namespace Universal_Updater
                     {
                         var data = new byte[stream.Length];
                         stream.Read(data, 0, data.Length);
-                        File.WriteAllBytes($@"C:\ProgramData\Universal Updater\{resourceName}", data);
+                        File.WriteAllBytes(tempDirectory + $@"\{resourceName}", data);
                     }
                     else
                     {
@@ -444,6 +717,26 @@ namespace Universal_Updater
             }
             catch { }
             return result;
+        }
+
+        static string CalculateMD5(string filePath)
+        {
+            using (var md5 = MD5.Create())
+            {
+                using (var stream = File.OpenRead(filePath))
+                {
+                    byte[] hashBytes = md5.ComputeHash(stream);
+                    return BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+                }
+            }
+        }
+        static bool IsRunningAsAdministrator()
+        {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+            {
+                WindowsPrincipal principal = new WindowsPrincipal(identity);
+                return principal.IsInRole(WindowsBuiltInRole.Administrator);
+            }
         }
     }
 }

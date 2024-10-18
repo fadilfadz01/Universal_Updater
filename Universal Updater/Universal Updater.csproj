@@ -36,11 +36,17 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
   <PropertyGroup>
-    <ApplicationIcon>Dakirby309-Windows-8-Metro-Other-Update-Metro.256.ico</ApplicationIcon>
+    <ApplicationIcon>Update-Metro.256.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <HintPath>..\packages\Newtonsoft.Json.13.0.3\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.IO.Compression.FileSystem" />
+    <Reference Include="System.Numerics" />
+    <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
     <Reference Include="Microsoft.CSharp" />
@@ -61,11 +67,21 @@
   <ItemGroup>
     <None Include="App.config" />
     <None Include="app.manifest" />
+    <None Include="packages.config" />
+    <None Include="Resources\expectedErrors.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="Resources\i386.zip">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
-    <EmbeddedResource Include="Resources\getdulogs.exe" />
-    <EmbeddedResource Include="Resources\iutool.exe" />
-    <EmbeddedResource Include="Resources\wget.exe" />
+    <None Include="Resources\iutool.bat">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="Resources\wget.exe">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <EmbeddedResource Include="Updates\13016.108.txt" />
     <EmbeddedResource Include="Updates\13037.0.txt" />
     <EmbeddedResource Include="Updates\13080.107.txt" />
@@ -74,7 +90,7 @@
     <EmbeddedResource Include="Updates\15254.603.txt" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="Dakirby309-Windows-8-Metro-Other-Update-Metro.256.ico" />
+    <Content Include="Update-Metro.256.ico" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
