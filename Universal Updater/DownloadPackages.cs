@@ -16,12 +16,12 @@ namespace Universal_Updater
     class DownloadPackages
     {
         static Tuple<DateTime, long, long> DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.MinValue, 0, 0);
-        static string[] installedPackages = Program.useConnectedDevice ? File.ReadAllLines(Program.tempDirectory + @"\InstalledPackages.csv") : new string[] { };
+        public static string[] installedPackages = new string[] { "Dummy" };
         static List<string> filteredPackages = new List<string>();
         static bool isFeatureInstalled = false;
         static bool filterCBSPackagesOnly = false;
         static readonly string[] knownPackages = { "ms_commsenhancementglobal.mainos", "ms_commsmessagingglobal.mainos", "microsoftphonefm.platformmanifest.efiesp", "microsoftphonefm.platformmanifest.mainos", "microsoftphonefm.platformmanifest.updateos", "UserInstallableFM.PlatformManifest" };
-        static readonly string[] featurePackages = { "MS_RCS_FEATURE_PACK.MainOS.cbsr", "ms_projecta.mainos", "arcadia.services.mainos", "arcadia.drivers.mainos" , "projecta.arcadia.mainos" };
+        public static FFUEntry FFUMountData = null;
         static readonly string[] skippedPackages = { };
         static readonly string[] packageCBSExtension = { ".cab", ".cbs_" };
         static readonly string[] packageSPKGExtension = { ".spkg", ".spkg_" };
@@ -81,7 +81,7 @@ namespace Universal_Updater
             return isFeatureInstalled;
         }
 
-        public static bool OfflineUpdate(string[] folderFiles, string pushFeature)
+        public static async Task<bool> OfflineUpdate(string[] folderFiles)
         {
         filterPackages:
             filteredPackages.Clear();
@@ -132,20 +132,17 @@ namespace Universal_Updater
             }
 
             ConsoleKeyInfo packagesFilterAction = default(ConsoleKeyInfo);
-            if (Program.useConnectedDevice)
+            // Allow user to push all package if he want
+            Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
+            Program.WriteLine("1. Filter packages", ConsoleColor.Green);
+            Program.WriteLine("2. Include all", ConsoleColor.DarkYellow);
+            Program.Write("Choice: ", ConsoleColor.Magenta);
+            do
             {
-                // Allow user to push all package if he want
-                Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
-                Program.WriteLine("1. Filter packages", ConsoleColor.Green);
-                Program.WriteLine("2. Include all", ConsoleColor.DarkYellow);
-                Program.Write("Choice: ", ConsoleColor.Magenta);
-                do
-                {
-                    packagesFilterAction = Console.ReadKey(true);
-                }
-                while (packagesFilterAction.KeyChar != '1' && packagesFilterAction.KeyChar != '2');
-                Program.Write(packagesFilterAction.KeyChar.ToString() + "\n");
+                packagesFilterAction = Console.ReadKey(true);
             }
+            while (packagesFilterAction.KeyChar != '1' && packagesFilterAction.KeyChar != '2');
+            Program.Write(packagesFilterAction.KeyChar.ToString() + "\n");
 
             var targetExtensionList = getExtensionsList();
             var previewType = "cbs";
@@ -154,38 +151,71 @@ namespace Universal_Updater
                 previewType = "spkg";
             }
 
-            if (!Program.useConnectedDevice || packagesFilterAction.KeyChar == '1')
+            if (Program.pushToFFU)
             {
-                Program.WriteLine($"\nFiltering packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
-                if (Program.useConnectedDevice)
+                Program.WriteLine("");
+            // For FFU we start mount from here
+            // Mount and fetch FFU info
+            mountFFUArea:
+                FFUMountData = await PushPackages.mountFFU(Program.FFUPath);
+                if (FFUMountData == null)
                 {
-                    Program.appendLog("\n[INSTALLED PACKAGES]\n");
-                    for (int i = 0; i < installedPackages.Length; i++)
+                    if (PushPackages.showRetryQuestion("Mount FFU failed!, retry?"))
                     {
-                        for (int j = 0; j < targetExtensionList.Length; j++)
-                        {
-                            var checkName = installedPackages[i].Split(',')[1] + targetExtensionList[j];
-                            var requiredPackages = folderFiles.Where(k => k.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                            if (requiredPackages != null)
-                            {
-                                if (!shouldSkip(requiredPackages))
-                                {
-                                    filteredPackages.Add(requiredPackages);
-                                }
-                            }
-                        }
-                        Program.appendLog($"{installedPackages[i]}\n");
+                        goto mountFFUArea;
+                    }
+                    else
+                    {
+                        Program.WriteLine("Couldn't mount target FFU.", ConsoleColor.Red);
+                        return false;
                     }
                 }
                 else
                 {
-                    foreach (var package in folderFiles)
+                getInstalledPackagesArea:
+                    installedPackages = (await GetDeviceInfo.GetInstalledPackagesFromFFU(FFUMountData)).ToArray();
+                    if (installedPackages.Length == 0)
                     {
-                        if (!shouldSkip(package))
+                        if (PushPackages.showRetryQuestion("Cannot get installed packages!, retry?"))
                         {
-                            filteredPackages.Add(package);
+                            goto getInstalledPackagesArea;
+                        }
+                        else
+                        {
+                            Program.WriteLine("Couldn't mount target FFU.", ConsoleColor.Red);
+                            return false;
                         }
                     }
+                }
+
+                Program.Write("\nPUSH MODE: ", ConsoleColor.Gray);
+                Program.WriteLine((PushPackages.useOldTools ? "FFU (SPKG)" : "FFU (CBS)"), (PushPackages.useOldTools ? ConsoleColor.DarkYellow : ConsoleColor.Blue));
+            }
+
+            if (packagesFilterAction.KeyChar == '1')
+            {
+                Program.WriteLine($"\nFiltering packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
+                Program.appendLog("\n[INSTALLED PACKAGES]\n");
+                for (int i = 0; i < installedPackages.Length; i++)
+                {
+                    for (int j = 0; j < targetExtensionList.Length; j++)
+                    {
+                        // Packages fetched from device info has `,`, from FFU usually clean
+                        var checkName = installedPackages[i] + targetExtensionList[j];
+                        if (checkName.IndexOf(",") >= 0)
+                        {
+                            checkName = installedPackages[i].Split(',')[1] + targetExtensionList[j];
+                        }
+                        var requiredPackages = folderFiles.Where(k => k.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                        if (requiredPackages != null)
+                        {
+                            if (!shouldSkip(requiredPackages))
+                            {
+                                filteredPackages.Add(requiredPackages);
+                            }
+                        }
+                    }
+                    Program.appendLog($"{installedPackages[i]}\n");
                 }
 
                 for (int i = 0; i < knownPackages.Length; i++)
@@ -222,14 +252,62 @@ namespace Universal_Updater
                         }
                     }
                 }
-                if (pushFeature == "Y")
+
+                // Features packages
+                foreach (var feature in Program.GlobalFeaturesList)
                 {
-                    for (int i = 0; i < featurePackages.Length; i++)
+                    if (feature.ShouldPresent)
                     {
-                        var requiredPackages = folderFiles.Where(j => j.IndexOf(featurePackages[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                        if (requiredPackages != null)
+                        if (feature.State)
                         {
-                            filteredPackages.Add(requiredPackages);
+                            for (int i = 0; i < feature.FeaturePackages.Length; i++)
+                            {
+                                var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                                if (requiredPackages != null)
+                                {
+                                    if (feature.FeaturePackages[i].ReplaceStock)
+                                    {
+                                        // Ensure to remove stock on from the list
+                                        var stockName = feature.FeaturePackages[i].TargetStockName;
+                                        for (int j = 0; j < targetExtensionList.Length; j++)
+                                        {
+                                            // Packages fetched from device info has `,`, from FFU usually clean
+                                            var checkName = stockName + targetExtensionList[j];
+                                            var packageRemoval = folderFiles.Where(a => a.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                                            if (packageRemoval != null)
+                                            {
+                                                if (filteredPackages.Remove(packageRemoval))
+                                                {
+                                                    Program.WriteLine($"Stock ({stockName}) replaced with feature", ConsoleColor.DarkYellow);
+                                                    Program.appendLog($"Package ({stockName}) replaced with feature ({feature.FeaturePackages[i].PackageName})\n");
+                                                }
+                                                else
+                                                {
+                                                    Program.WriteLine($"Stock ({stockName}) is not presented in filtered list!", ConsoleColor.DarkYellow);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (!shouldSkip(requiredPackages))
+                                    {
+                                        filteredPackages.Add(requiredPackages);
+                                        Program.appendLog($"Feature Package ({requiredPackages}) added to filtered list\n");
+                                    }
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Ensure package removed from the list
+                            for (int i = 0; i < feature.FeaturePackages.Length; i++)
+                            {
+                                var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                                if (requiredPackages != null)
+                                {
+                                    filteredPackages.Remove(requiredPackages);
+                                }
+                            }
                         }
                     }
                 }
@@ -387,18 +465,19 @@ namespace Universal_Updater
                 Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
                 Program.WriteLine("1. Push packages", ConsoleColor.Green);
                 Program.WriteLine("2. Retry");
+                Program.WriteLine("3. Exit");
                 Program.Write("Choice: ", ConsoleColor.Magenta);
                 ConsoleKeyInfo packagesAction;
                 do
                 {
                     packagesAction = Console.ReadKey(true);
                 }
-                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2' && packagesAction.KeyChar != '3');
                 Program.Write(packagesAction.KeyChar.ToString() + "\n");
 
-                Program.WriteLine("\n[PREPARING]\nPlease wait...", ConsoleColor.DarkYellow);
                 if (packagesAction.KeyChar == '1')
                 {
+                    Program.WriteLine("\n[PREPARING]\nPlease wait...", ConsoleColor.DarkYellow);
                     for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
                     {
                         Program.resetCursorPosition();
@@ -406,10 +485,14 @@ namespace Universal_Updater
                         File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
                     }
                 }
-                else
+                else if (packagesAction.KeyChar == '2')
                 {
                     Program.WriteLine("");
                     goto filterPackages;
+                }
+                else
+                {
+                    return false;
                 }
             }
             else
@@ -504,6 +587,7 @@ namespace Universal_Updater
                 if (package.IndexOf(testCheck, StringComparison.OrdinalIgnoreCase) > 0)
                 {
                     // Package exists in the skip list
+                    Program.appendLog($"Package ({package}) skipped!, member of skipped list\n");
                     return true;
                 }
             }
@@ -516,6 +600,7 @@ namespace Universal_Updater
                 if (sizeInBytes <= 0)
                 {
                     // Package has 0MB size, not a valid package
+                    Program.appendLog($"Package ({package}) skipped!, 0MB size, not a valid package\n");
                     return true;
                 }
             }
@@ -523,6 +608,7 @@ namespace Universal_Updater
             if (filteredPackages.Contains(package))
             {
                 // Package already added, this happens due to extension and prefix match
+                Program.appendLog($"Package ({package}) skipped!, already exists\n");
                 return true;
             }
 

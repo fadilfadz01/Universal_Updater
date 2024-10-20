@@ -1,0 +1,96 @@
+[
+  {
+    "Name": "Remove RCS Feature",
+    "Description": "(not recommended for regular updates)",
+    "DescriptionColor": 12,
+    "State": false,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "MS_RCS_FEATURE_PACK.MainOS.cbsr",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      }
+    ]
+  },
+  {
+    "Name": "ProjectA",
+    "Description": "(Astoria)",
+    "DescriptionColor": 8,
+    "State": true,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "ms_projecta.mainos",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      },
+      {
+        "PackageName": "Arcadia.Services.MainOS",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      },
+      {
+        "PackageName": "Arcadia.Application.CPU_Z",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      }
+    ]
+  },
+  {
+    "Name": "Acer Service",
+    "Description": "",
+    "DescriptionColor": 8,
+    "State": true,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "acer.Service.AcerSystemService",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      }
+    ]
+  },
+  {
+    "Name": "Flight Signing",
+    "Description": "",
+    "DescriptionColor": 8,
+    "State": true,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "Insider.SupplementalPolicyTokens.FlightToken",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      }
+    ]
+  },
+  {
+    "Name": "CMD Injector",
+    "Description": "(Permanent)",
+    "DescriptionColor": 8,
+    "State": true,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "FadilFadz.CMDInjector.Permanent",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      }
+    ]
+  },
+  {
+    "Name": "Developer Menu",
+    "Description": "",
+    "DescriptionColor": 8,
+    "State": true,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "Microsoft.Release_Production.Efiesp.Dev",
+        "ReplaceStock": true,
+        "TargetStockName": "Microsoft.Release_Production.Efiesp"
+      }
+    ]
+  }
+]
