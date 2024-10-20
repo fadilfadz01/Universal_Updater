@@ -4,8 +4,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Management;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using System.Runtime.Remoting.Messaging;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -44,28 +47,18 @@ namespace Universal_Updater
             updateProcess.WaitForExit(timeout);
         }
 
-        public static async Task PushToFFU()
+        public static async Task PushToFFU(FFUEntry FFUMountData)
         {
             stopRunningApps("updateapp.exe");
             stopRunningApps("wpimage.exe");
             var packagesPath = Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages";
             if (!string.IsNullOrEmpty(Program.FFUPath))
             {
-            mountFFUArea:
-                var driveIdentifier = mountFFU(Program.FFUPath);
-                if (driveIdentifier == null)
-                {
-                    if (showRetryQuestion("Mount FFU failed!, retry?"))
-                    {
-                        goto mountFFUArea;
-                    }
-                }
-                else
                 {
                     var pushState = await pushToFFU(packagesPath);
                     if (!pushState)
                     {
-                        await dismountFFUQuestion(driveIdentifier);
+                        await dismountFFUQuestion(FFUMountData);
                         Program.WriteLine("Pushing packages to FFU failed or cancelled!", ConsoleColor.Red);
                     }
                     else
@@ -73,7 +66,7 @@ namespace Universal_Updater
                     // Ask for save location and dismount
                     saveFFUArea:
                         string saveLocation = null;
-                        saveLocation = ShowSaveFileDialog();
+                        saveLocation = await ShowSaveFileDialogAsync();
                         if (string.IsNullOrEmpty(saveLocation))
                         {
                             if (showRetryQuestion("Save location is not valid!, retry?"))
@@ -83,13 +76,13 @@ namespace Universal_Updater
                             else
                             {
                                 // Ask for dimount
-                                await dismountFFUQuestion(driveIdentifier);
+                                await dismountFFUQuestion(FFUMountData);
                             }
                         }
                         else
                         {
                         dismountArea:
-                            var dismountState = await dismountFFU(driveIdentifier, saveLocation);
+                            var dismountState = await dismountFFU(FFUMountData, saveLocation);
                             if (!dismountState)
                             {
                                 if (showRetryQuestion("Dismount FFU failed!, retry?"))
@@ -107,7 +100,7 @@ namespace Universal_Updater
             }
         }
 
-        public static async Task dismountFFUQuestion(string driveIdentifier)
+        public static async Task dismountFFUQuestion(FFUEntry FFUMountData)
         {
             Program.WriteLine($"\nDo you want to dismount the FFU?", ConsoleColor.DarkYellow);
             Program.WriteLine("1. Dismount");
@@ -124,7 +117,7 @@ namespace Universal_Updater
             if (dismountAction.KeyChar == '1')
             {
             dismountOnlyArea:
-                var dismountState = await dismountFFU(driveIdentifier, null);
+                var dismountState = await dismountFFU(FFUMountData, null);
                 if (!dismountState)
                 {
                     if (showRetryQuestion("Dismount FFU failed!, retry?"))
@@ -150,13 +143,22 @@ namespace Universal_Updater
             Program.WriteLine("-------------------", ConsoleColor.DarkGray);
 
             double totalSizeInMB = totalBytes / (1024.0 * 1024.0);
-            Program.WriteLine("Total Size       : " + Math.Round(totalSizeInMB) + " MB", ConsoleColor.DarkGray);
+            if (Math.Round(totalSizeInMB) == 0)
+            {
+                totalSizeInMB = 1;
+            }
+            Program.WriteLine("Total Size       : ~" + Math.Round(totalSizeInMB) + " MB", ConsoleColor.DarkGray);
 
             double transferSpeedMBps = 30.0; // Not sure, but approx
             double approxTransferTimeInSeconds = totalSizeInMB / transferSpeedMBps;
             double approxTransferTimeInSecondsSlower = totalSizeInMB / (transferSpeedMBps / 2);
-            Program.WriteLine("Approx. transfer : ~(" + Math.Round(approxTransferTimeInSeconds) + " - " + Math.Round(approxTransferTimeInSecondsSlower) + ") seconds", ConsoleColor.DarkGray);
+            if (Math.Round(approxTransferTimeInSeconds) == 0)
+            {
+                approxTransferTimeInSeconds = 1;
+                approxTransferTimeInSecondsSlower = 5;
+            }
 
+            Program.WriteLine("Approx. transfer : ~(" + Math.Round(approxTransferTimeInSeconds) + " - " + Math.Round(approxTransferTimeInSecondsSlower) + ") seconds", ConsoleColor.DarkGray);
             if (approxTransferTimeInSeconds * 1000 > timeout)
             {
                 timeout = (int)(approxTransferTimeInSeconds * 1000);
@@ -187,18 +189,44 @@ namespace Universal_Updater
             }
         }
 
-        public static string mountFFU(string ffuPath)
+        // Set tempMount to true for short mount usage like .wim
+        public static async Task<FFUEntry> mountFFU(string ffuPath, bool tempMount = false)
         {
             try
             {
-                Program.WriteLine("Mounting FFU...", ConsoleColor.Blue);
+                if (!tempMount)
+                {
+                    await safeMountCheck();
+                    Program.WriteLine("Mounting FFU...", ConsoleColor.Blue);
+                    await Task.Delay(1500);
+                }
+                else
+                {
+                    Program.appendLog($"Mounting {ffuPath}\n");
+                }
+
                 var physicalDrive = RunProcess("wpimage.exe", $"Mount \"{ffuPath}\"");
 
                 var driveIdentifier = ExtractPhysicalDrive(physicalDrive);
                 if (driveIdentifier != null)
                 {
-                    Program.WriteLine($"Mounted on: {driveIdentifier}", ConsoleColor.Green);
-                    return driveIdentifier.Replace("?", ".");
+                    var tempMountPath = ExtractTempMountPath(physicalDrive);
+                    if (tempMountPath != null)
+                    {
+                        var FFUMountData = new FFUEntry(driveIdentifier.Replace("?", "."), tempMountPath, tempMount);
+                        if (!tempMount)
+                        {
+                            Program.WriteLine($"Mounted on : {driveIdentifier}", ConsoleColor.Green);
+                            Program.WriteLine($"Temp folder: {tempMountPath}", ConsoleColor.DarkGray);
+                            FFUMountData.saveMountData();
+                        }
+                        else
+                        {
+                            Program.appendLog($"Mounted on : {driveIdentifier}\n");
+                            Program.appendLog($"Temp folder: {tempMountPath}\n");
+                        }
+                        return FFUMountData;
+                    }
                 }
             }
             catch (Exception ex)
@@ -209,20 +237,47 @@ namespace Universal_Updater
             return null;
         }
 
-        public static async Task<bool> dismountFFU(string driveIdentifier, string outputFFU)
+        public static async Task safeMountCheck()
+        {
+            var mountedDriveCachedData = Program.toolsDirectory + @"\mounted.ffu.json";
+            if (File.Exists(mountedDriveCachedData))
+            {
+                var data = File.ReadAllText(mountedDriveCachedData);
+                FFUEntry entry = JsonConvert.DeserializeObject<FFUEntry>(data);
+
+                if (Directory.Exists(entry.MountPath) && IsDriveMounted(entry.DriveIdentifier))
+                {
+                    // User closed the app without dismounting the FFU
+                    // this can lead to issues and we should dismount first
+                    Program.WriteLine($"Mounted FFU detected! at {entry.DriveIdentifier}", ConsoleColor.Red);
+                    Program.WriteLine($"This can lead to issues, dismounting {entry.DriveIdentifier}..", ConsoleColor.Red);
+                    await Task.Delay(1000);
+                    await dismountFFU(entry, null);
+                }
+                File.Delete(mountedDriveCachedData);
+            }
+        }
+
+        public static async Task<bool> dismountFFU(FFUEntry FFUMountData, string outputFFU)
         {
             string output = null;
             try
             {
-                Program.WriteLine("Dismounting FFU...", ConsoleColor.Blue);
-                if (outputFFU == null)
+                if (!FFUMountData.TempMount)
                 {
-                    output = await RunProcessWithLog("wpimage.exe", $"Dismount -physicalDrive {driveIdentifier}");
-
+                    Program.WriteLine("Dismounting FFU...", ConsoleColor.Blue);
                 }
                 else
                 {
-                    output = await RunProcessWithLog("wpimage.exe", $"Dismount -physicalDrive {driveIdentifier} -imagePath \"{outputFFU}\" -noSign");
+                    Program.appendLog($"Dismounting {FFUMountData.DriveIdentifier}\n");
+                }
+                if (outputFFU == null)
+                {
+                    output = await RunProcessWithLog("wpimage.exe", $"Dismount -physicalDrive \"{FFUMountData.DriveIdentifier}\"");
+                }
+                else
+                {
+                    output = await RunProcessWithLog("wpimage.exe", $"Dismount -physicalDrive \"{FFUMountData.DriveIdentifier}\" -imagePath \"{outputFFU}\" -noSign");
                 }
             }
             catch (Exception ex)
@@ -235,7 +290,14 @@ namespace Universal_Updater
             {
                 return false;
             }
-            Program.WriteLine("FFU dismounted successfully", ConsoleColor.Green);
+            if (!FFUMountData.TempMount)
+            {
+                Program.WriteLine("FFU dismounted successfully", ConsoleColor.Green);
+            }
+            else
+            {
+                Program.appendLog($"Dismounted successfully\n");
+            }
             return true;
         }
 
@@ -413,6 +475,7 @@ namespace Universal_Updater
 
         public static string RunProcess(string fileName, string arguments)
         {
+            Program.showTitleWaitMessage(true, fileName);
             using (var process = new Process())
             {
                 var fullFilePath = Program.toolsDirectory + $@"\i386\{fileName}";
@@ -433,15 +496,18 @@ namespace Universal_Updater
                 {
                     string formattedErrorCode = "0x" + process.ExitCode.ToString("X");
                     Program.WriteLine($"Process '{fileName}' exited with code {formattedErrorCode}.", ConsoleColor.Red);
+                    Program.showTitleWaitMessage(false);
                     return null;
                 }
 
+                Program.showTitleWaitMessage(false);
                 return output;
             }
         }
 
         public static async Task<string> RunProcessWithLog(string fileName, string arguments, bool useOldSet = false)
         {
+            Program.showTitleWaitMessage(true, fileName);
             using (var process = new Process())
             {
                 var prefix = "";
@@ -496,6 +562,7 @@ namespace Universal_Updater
                     bool errorIsExpected = isErrorExpected($"Error, {formattedErrorCode}", fileName, arguments);
                     if (!errorIsExpected)
                     {
+                        Program.showTitleWaitMessage(false);
                         return null;
                     }
                 }
@@ -507,14 +574,15 @@ namespace Universal_Updater
                     if (!errorIsExpected)
                     {
                         Program.WriteLine($"Process '{fileName}' has errors, check the log.", ConsoleColor.Red);
+                        Program.showTitleWaitMessage(false);
                         return null;
                     }
                 }
 
+                Program.showTitleWaitMessage(false);
                 return output;
             }
         }
-
 
         static Dictionary<string, List<ErrorEntry>> expectedErrorsMap = new Dictionary<string, List<ErrorEntry>>();
         public static bool isErrorExpected(string output, string fileName, string arguments)
@@ -600,10 +668,32 @@ namespace Universal_Updater
 
             return output.Substring(startIndex, endIndex - startIndex).Trim();
         }
-
-        static string ShowSaveFileDialog()
+        public static string ExtractTempMountPath(string output)
         {
-            string saveFilePath = null;
+            if (string.IsNullOrEmpty(output))
+            {
+                Program.WriteLine("Failed to read physical drive information.", ConsoleColor.Red);
+                return null;
+            }
+            string searchPattern = "Main Mount Path: ";
+            int startIndex = output.IndexOf(searchPattern);
+            if (startIndex < 0)
+            {
+                Program.WriteLine("Failed to find main mount path information.", ConsoleColor.Red);
+                return null;
+            }
+
+            startIndex += searchPattern.Length;
+            int endIndex = output.IndexOf(Environment.NewLine, startIndex);
+
+            return output.Substring(startIndex, endIndex - startIndex).Trim();
+        }
+
+        public static Task<string> ShowSaveFileDialogAsync()
+        {
+            var taskCompletionSource = new TaskCompletionSource<string>();
+
+            // start STA thread for showing the SaveFileDialog
             Thread staThread = new Thread(() =>
             {
                 using (var saveFileDialog = new SaveFileDialog())
@@ -615,7 +705,11 @@ namespace Universal_Updater
 
                     if (saveFileDialog.ShowDialog() == DialogResult.OK)
                     {
-                        saveFilePath = saveFileDialog.FileName;
+                        taskCompletionSource.SetResult(saveFileDialog.FileName);
+                    }
+                    else
+                    {
+                        taskCompletionSource.SetResult(null);
                     }
                 }
             });
@@ -623,15 +717,58 @@ namespace Universal_Updater
             staThread.SetApartmentState(ApartmentState.STA);
             staThread.Start();
 
-            staThread.Join();
-
-            return saveFilePath;
+            return taskCompletionSource.Task;
         }
+
+        public static bool IsDriveMounted(string physicalDrive)
+        {
+            try
+            {
+                var searcher = new ManagementObjectSearcher(
+                    @"SELECT * FROM Win32_DiskDrive WHERE DeviceID='" + physicalDrive.Replace("\\", "\\\\") + "'");
+
+                foreach (ManagementObject disk in searcher.Get())
+                {
+                    var partitionSearcher = new ManagementObjectSearcher(
+                        $"ASSOCIATORS OF {{Win32_DiskDrive.DeviceID='{disk["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
+
+                    foreach (ManagementObject partition in partitionSearcher.Get())
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.appendLog(ex.Message);
+            }
+            return false;
+        }
+
     }
 
     public class ErrorEntry
     {
         public string Argument { get; set; }
         public List<string> Errors { get; set; }
+    }
+    public class FFUEntry
+    {
+        public string DriveIdentifier { get; set; }
+        public string MountPath { get; set; }
+        public bool TempMount { get; set; }
+        public FFUEntry(string driveIdentifier, string mountPath, bool tempMount)
+        {
+            DriveIdentifier = driveIdentifier;
+            MountPath = mountPath;
+            TempMount = tempMount;
+        }
+
+        public void saveMountData()
+        {
+            var mountedDriveCachedData = Program.toolsDirectory + @"\mounted.ffu.json";
+            string jsonString = JsonConvert.SerializeObject(this, Formatting.Indented);
+            File.WriteAllText(mountedDriveCachedData, jsonString);
+        }
     }
 }
