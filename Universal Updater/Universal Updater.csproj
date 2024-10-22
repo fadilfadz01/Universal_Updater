@@ -86,6 +86,7 @@
     <None Include="Resources\expectedErrors.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include="Resources\feature-single.json" />
     <None Include="Resources\features.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

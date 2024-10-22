@@ -344,7 +344,8 @@ namespace Universal_Updater
                         }
                         else if (retryAnswer == '2')
                         {
-                            goto installArea;
+                            //goto installArea;
+                            goto stageArea;
                         }
                         else
                         {
@@ -354,16 +355,60 @@ namespace Universal_Updater
                     }
                 }
 
-            installArea:
-                Program.WriteLine("Installing Packages...", ConsoleColor.Blue);
-                var install = await RunProcessWithLog("updateapp.exe", $"install \"{packagePath}\"");
-                if (install == null)
+            //installArea:
+            //    Program.WriteLine("Installing Packages...", ConsoleColor.Blue);
+            //    var install = await RunProcessWithLog("updateapp.exe", $"install \"{packagePath}\"");
+            //    if (install == null)
+            //    {
+            //        // Something went wrong
+            //        var retryAnswer = showRetryQuestionWithContinue("Installing packages failed!, retry?");
+            //        if (retryAnswer == '1')
+            //        {
+            //            goto installArea;
+            //        }
+            //        else if (retryAnswer == '2')
+            //        {
+            //            goto stageArea;
+            //        }
+            //        else
+            //        {
+            //            userExitTheProcess = true;
+            //            goto exitProcessArea;
+            //        }
+            //    }
+
+            stageArea:
+                Program.WriteLine("Staging Packages...", ConsoleColor.Blue);
+                var stage = await RunProcessWithLog("updateapp.exe", $"stage \"{packagePath}\"");
+                if (stage == null)
                 {
                     // Something went wrong
-                    var retryAnswer = showRetryQuestionWithContinue("Installing packages failed!, retry?");
+                    var retryAnswer = showRetryQuestionWithContinue("Staging packages failed!, retry?");
                     if (retryAnswer == '1')
                     {
-                        goto installArea;
+                        goto stageArea;
+                    }
+                    else if (retryAnswer == '2')
+                    {
+                        goto commitArea;
+                    }
+                    else
+                    {
+                        userExitTheProcess = true;
+                        goto exitProcessArea;
+                    }
+                }
+
+            commitArea:
+                Program.WriteLine("Committing Packages...", ConsoleColor.Blue);
+                var commit = await RunProcessWithLog("updateapp.exe", "commit migratedata noreboot");
+                if (commit == null)
+                {
+                    // Something went wrong
+                    var retryAnswer = showRetryQuestionWithContinue("Commit failed!, retry?");
+                    if (retryAnswer == '1')
+                    {
+                        goto commitArea;
                     }
                     else if (retryAnswer == '2')
                     {
@@ -375,7 +420,7 @@ namespace Universal_Updater
                         goto exitProcessArea;
                     }
                 }
-
+                
             cleanupArea:
                 Program.WriteLine("Cleaning up...", ConsoleColor.Blue);
                 var cleanup = await RunProcessWithLog("updateapp.exe", "cleanup");

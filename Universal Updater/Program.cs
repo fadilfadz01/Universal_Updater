@@ -247,7 +247,7 @@ namespace Universal_Updater
             ffuPathArea:
                 // Ask for FFU
                 WriteLine("\n[NOTICE]", ConsoleColor.Red);
-                WriteLine("- Hard reset is required after you flash FFU!", ConsoleColor.DarkYellow);
+                //WriteLine("- Hard reset is required after you flash FFU!", ConsoleColor.DarkYellow);
                 WriteLine("- Ensure to have enough space at C: drive", ConsoleColor.Gray);
                 WriteLine("- No FFUs mounted before, check Computer Management", ConsoleColor.Gray);
                 WriteLine("- Don't interrupt the process until you asked for", ConsoleColor.Gray);
@@ -594,6 +594,48 @@ namespace Universal_Updater
                 {
                     var data = File.ReadAllText(featuresFile);
                     GlobalFeaturesList = JsonConvert.DeserializeObject<List<FeaturesItem>>(data);
+
+                    // Scan for possible attached packages info
+                    foreach (var featureInfoCheck in folderFiles)
+                    {
+                        try
+                        {
+                            // This method don't expect duplicated features
+                            // Built-in features (DevMenu, Astoria, Acer, CMDI) shouldn't have attached info
+                            if (featureInfoCheck.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                            {
+                                // This expected to be feature info attached with the cab
+                                var featureInfoCheckData = File.ReadAllText(featureInfoCheck);
+                                if (!string.IsNullOrEmpty(featureInfoCheckData))
+                                {
+                                    try
+                                    {
+                                        var featureObject = JsonConvert.DeserializeObject<FeaturesItem>(featureInfoCheckData);
+                                        GlobalFeaturesList.Add(featureObject);
+                                    }
+                                    catch (Exception ex2)
+                                    {
+                                        // This file may have array instead
+                                        var featuresObjects = JsonConvert.DeserializeObject<List<FeaturesItem>>(featureInfoCheckData);
+                                        if (featuresObjects != null && featuresObjects.Count > 0)
+                                        {
+                                            foreach (var featureObject in featuresObjects)
+                                            {
+                                                GlobalFeaturesList.Add(featureObject);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch (Exception exf)
+                        {
+                            appendLog(exf.Message + "\n");
+                        }
+                    }
+
+                    GlobalFeaturesList.Sort((x, y) => x.Order.CompareTo(y.Order));
+
                     foreach (var feature in GlobalFeaturesList)
                     {
                         feature.UpdatePresentState(folderFiles);
@@ -867,6 +909,7 @@ namespace Universal_Updater
     {
         public string Name;
         public string Description;
+        public int Order = 0;
         public ConsoleColor DescriptionColor;
         public bool State;
         public bool ShouldPresent = false;

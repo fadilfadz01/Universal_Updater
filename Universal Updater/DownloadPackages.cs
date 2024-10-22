@@ -271,7 +271,6 @@ namespace Universal_Updater
                                         var stockName = feature.FeaturePackages[i].TargetStockName;
                                         for (int j = 0; j < targetExtensionList.Length; j++)
                                         {
-                                            // Packages fetched from device info has `,`, from FFU usually clean
                                             var checkName = stockName + targetExtensionList[j];
                                             var packageRemoval = folderFiles.Where(a => a.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
                                             if (packageRemoval != null)

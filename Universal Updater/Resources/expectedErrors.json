@@ -7,6 +7,10 @@
     {
       "argument": "install",
       "errors": [ "0x80004001" ]
+    },
+    {
+      "argument": "commit migratedata",
+      "errors": [ "0x80070BC2" ]
     }
   ]
 }
