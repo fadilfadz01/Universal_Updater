@@ -26,7 +26,7 @@ namespace Universal_Updater
         public static extern int MessageBox(IntPtr h, string Content, string Title, int type);
         public static ConsoleKeyInfo selectedUpdate;
         static ConsoleKeyInfo featureChoice;
-        private static string packagePath;
+        public static string packagePath;
         public static bool pushToFFU = false;
         public static string FFUPath = null;
         static readonly string[,] updateStructure = { { null, null, null }, { "13016.108", "13080.107", "Offline" }, { "13037.0", "Offline", null }, { "14393.1066", "Offline", null }, { "15063.297", "15254.603", "Offline" }, { "15254.603", "Offline", null }, { "Offline", null, null } };
@@ -34,6 +34,7 @@ namespace Universal_Updater
         public static string toolsDirectory = "Resources";
         public static string filteredDirectory = $@"{Environment.CurrentDirectory}\Filtered";
         public static string logFile = $@"{Environment.CurrentDirectory}\Logs\universal_updater.txt";
+        public static UpdateRules updateRules = new UpdateRules();
 
         // For testing only without device
         public static bool useConnectedDevice = true;
@@ -50,10 +51,17 @@ namespace Universal_Updater
         {
             try
             {
-                File.AppendAllText(Program.logFile, text);
+                using (var stream = new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                {
+                    using (var writer = new StreamWriter(stream))
+                    {
+                        writer.Write(text);
+                    }
+                }
             }
             catch (Exception e)
             {
+
             }
         }
         public static void WriteLine(string text, ConsoleColor color = ConsoleColor.White, bool trimPreviewIfLong = false, bool appendToLog = true)
@@ -153,6 +161,9 @@ namespace Universal_Updater
             appendAppInfoToLog();
             ConsoleStyle("", 0, ConsoleColor.Blue);
 
+            // Load rules / configs
+            LoadUpdateRules();
+
             // Extract important tools if not ready
             string startPath = AppDomain.CurrentDomain.BaseDirectory;
             string zipPath = Path.Combine(startPath, @"Resources\i386.zip");
@@ -209,7 +220,7 @@ namespace Universal_Updater
                     deleteProcess.Start();
                     deleteProcess.WaitForExit();
                     showTitleWaitMessage(false);
-                    if (deleteProcess.HasExited)
+                    if (deleteProcess.HasExited && deleteProcess.ExitCode != 0)
                     {
                         ConsoleStyle(ex.Message, 0, ConsoleColor.Red);
                         WriteLine("\nRetrying...", ConsoleColor.DarkYellow);
@@ -238,7 +249,7 @@ namespace Universal_Updater
             {
                 updateTargetAction = Console.ReadKey(true);
             }
-            while (updateTargetAction.KeyChar != '1' && updateTargetAction.KeyChar != '2');
+            while (!IsNumberKeyOrNumpad(updateTargetAction, new char[] { '1', '2' }));
             Write(updateTargetAction.KeyChar.ToString() + "\n");
             pushToFFU = updateTargetAction.KeyChar != '1';
 
@@ -247,7 +258,7 @@ namespace Universal_Updater
             ffuPathArea:
                 // Ask for FFU
                 WriteLine("\n[NOTICE]", ConsoleColor.Red);
-                //WriteLine("- Hard reset is required after you flash FFU!", ConsoleColor.DarkYellow);
+                WriteLine("- After flashing FFU, phone will perform hard reset", ConsoleColor.DarkYellow);
                 WriteLine("- Ensure to have enough space at C: drive", ConsoleColor.Gray);
                 WriteLine("- No FFUs mounted before, check Computer Management", ConsoleColor.Gray);
                 WriteLine("- Don't interrupt the process until you asked for", ConsoleColor.Gray);
@@ -269,7 +280,7 @@ namespace Universal_Updater
                     }
                     else
                     {
-                        pushToFFU = false;
+                        printLogLocation();
                         return;
                     }
                 }
@@ -437,7 +448,7 @@ namespace Universal_Updater
                         {
                             packagesAction = Console.ReadKey(true);
                         }
-                        while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                        while (!IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
                         Console.Write(packagesAction.KeyChar.ToString() + "\n");
                         if (packagesAction.KeyChar == '1')
                         {
@@ -468,7 +479,7 @@ namespace Universal_Updater
                     {
                         packagesAction = Console.ReadKey(true);
                     }
-                    while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                    while (!IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
                     Write(packagesAction.KeyChar.ToString() + "\n");
                     if (packagesAction.KeyChar == '1')
                     {
@@ -587,25 +598,43 @@ namespace Universal_Updater
         public static List<FeaturesItem> GlobalFeaturesList = new List<FeaturesItem>();
         static void showFeaturesSelection(string[] folderFiles)
         {
+            LoadUpdateRules(packagePath);
             try
             {
                 var featuresFile = toolsDirectory + @"\features.json";
                 if (File.Exists(featuresFile))
                 {
-                    var data = File.ReadAllText(featuresFile);
-                    GlobalFeaturesList = JsonConvert.DeserializeObject<List<FeaturesItem>>(data);
-
-                    // Scan for possible attached packages info
-                    foreach (var featureInfoCheck in folderFiles)
+                    try
                     {
-                        try
+                        var data = File.ReadAllText(featuresFile);
+                        if (!string.IsNullOrEmpty(data))
                         {
-                            // This method don't expect duplicated features
-                            // Built-in features (DevMenu, Astoria, Acer, CMDI) shouldn't have attached info
-                            if (featureInfoCheck.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                            GlobalFeaturesList = JsonConvert.DeserializeObject<List<FeaturesItem>>(data);
+                        }
+                        else
+                        {
+                            appendLog("Universal Update features.json is empty!\n");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        appendLog($"Universal Update features.json error: {ex.Message}\n");
+                    }
+                }
+
+                // Scan for possible attached packages info
+                foreach (var featureInfoCheck in folderFiles)
+                {
+                    try
+                    {
+                        // This method don't expect duplicated features
+                        // Built-in features (DevMenu, Astoria, Acer, CMDI) shouldn't have attached info
+                        if (featureInfoCheck.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // This expected to be feature info attached with the cabs if it contain (FeaturePackages)
+                            var featureInfoCheckData = File.ReadAllText(featureInfoCheck);
+                            if (featureInfoCheckData.Contains("FeaturePackages"))
                             {
-                                // This expected to be feature info attached with the cab
-                                var featureInfoCheckData = File.ReadAllText(featureInfoCheck);
                                 if (!string.IsNullOrEmpty(featureInfoCheckData))
                                 {
                                     try
@@ -628,51 +657,54 @@ namespace Universal_Updater
                                 }
                             }
                         }
-                        catch (Exception exf)
-                        {
-                            appendLog(exf.Message + "\n");
-                        }
                     }
-
-                    GlobalFeaturesList.Sort((x, y) => x.Order.CompareTo(y.Order));
-
-                    foreach (var feature in GlobalFeaturesList)
+                    catch (Exception exf)
                     {
-                        feature.UpdatePresentState(folderFiles);
+                        appendLog(exf.Message + "\n");
                     }
+                }
 
-                    // Get only items that presented as packages in target folder
-                    var filteredFeatures = GlobalFeaturesList.Where(feature => feature.ShouldPresent).ToList();
-                    if (filteredFeatures.Count > 0)
+                GlobalFeaturesList.Sort((x, y) => x.Order.CompareTo(y.Order));
+
+                foreach (var feature in GlobalFeaturesList)
+                {
+                    feature.UpdatePresentState(folderFiles);
+                }
+
+                // Get only items that presented as packages in target folder
+                var filteredFeatures = GlobalFeaturesList.Where(feature => feature.ShouldPresent).ToList();
+                if (filteredFeatures.Count > 0)
+                {
+                    WriteLine("\n[AVAILABLE FEATURES]", ConsoleColor.DarkGray);
+                    WriteLine("Toggle features using their number:", ConsoleColor.Blue, false, false);
+                    WriteLine("", ConsoleColor.Gray, false, false);
+                    for (int i = 0; i < filteredFeatures.Count; i++)
                     {
-                        WriteLine("\n[AVAILABLE FEATURES]", ConsoleColor.DarkGray);
-                        WriteLine("Toggle features using their number:", ConsoleColor.Blue, false, false);
                         WriteLine("", ConsoleColor.Gray, false, false);
+                    }
+                    while (true)
+                    {
+                        int newRow = Math.Max(Console.CursorTop - (filteredFeatures.Count + 1), 0);
+                        Console.SetCursorPosition(0, newRow);
+
+                        // Display features with checkboxes
                         for (int i = 0; i < filteredFeatures.Count; i++)
                         {
-                            WriteLine("", ConsoleColor.Gray, false, false);
-                        }
-                        while (true)
-                        {
-                            int newRow = Math.Max(Console.CursorTop - (filteredFeatures.Count + 1), 0);
-                            Console.SetCursorPosition(0, newRow);
-
-                            // Display features with checkboxes
-                            for (int i = 0; i < filteredFeatures.Count; i++)
+                            if (filteredFeatures[i].ShouldPresent)
                             {
-                                if (filteredFeatures[i].ShouldPresent)
-                                {
-                                    string checkbox = filteredFeatures[i].State ? "[+]" : "[-]";
-                                    Write($"{i + 1}. {checkbox} {filteredFeatures[i].Name}", filteredFeatures[i].State ? ConsoleColor.Green : ConsoleColor.Red, false, false);
-                                    WriteLine($" {filteredFeatures[i].Description}", filteredFeatures[i].DescriptionColor, false, false);
-                                }
-                                else
-                                {
-                                    Write($"{i + 1}. [!] {filteredFeatures[i].Name}", ConsoleColor.DarkGray, false, false);
-                                    WriteLine($" (Cab not presented)", ConsoleColor.DarkGray, false, false);
-                                }
+                                string checkbox = filteredFeatures[i].State ? "[+]" : "[-]";
+                                Write($"{i + 1}. {checkbox} {filteredFeatures[i].Name}", filteredFeatures[i].State ? ConsoleColor.Green : ConsoleColor.Red, false, false);
+                                WriteLine($" {filteredFeatures[i].Description}", filteredFeatures[i].DescriptionColor, false, false);
                             }
+                            else
+                            {
+                                Write($"{i + 1}. [!] {filteredFeatures[i].Name}", ConsoleColor.DarkGray, false, false);
+                                WriteLine($" (Cab not presented)", ConsoleColor.DarkGray, false, false);
+                            }
+                        }
 
+                        if (!updateRules.ForcePushFeatures)
+                        {
                             WriteLine($"0. Confirm", ConsoleColor.DarkYellow, false, false);
                             Write($"Choice: ", ConsoleColor.Magenta, false, false);
 
@@ -707,19 +739,24 @@ namespace Universal_Updater
                                 break;
                             }
                         }
-
-                        // Print the result to log
-                        for (int i = 0; i < GlobalFeaturesList.Count; i++)
+                        else
                         {
-                            var feature = GlobalFeaturesList[i];
-                            if (feature.ShouldPresent)
-                            {
-                                appendLog($"{feature.Name}: " + (feature.State ? "Enabled" : "Disabled") + "\n");
-                            }
-                            else
-                            {
-                                appendLog($"{feature.Name}: Cab not presented in files\n");
-                            }
+                            WriteLine($"Push all features enabled", ConsoleColor.Magenta);
+                            break;
+                        }
+                    }
+
+                    // Print the result to log
+                    for (int i = 0; i < GlobalFeaturesList.Count; i++)
+                    {
+                        var feature = GlobalFeaturesList[i];
+                        if (feature.ShouldPresent)
+                        {
+                            appendLog($"{feature.Name}: " + (feature.State ? "Enabled" : "Disabled") + "\n");
+                        }
+                        else
+                        {
+                            appendLog($"{feature.Name}: Cab not presented in files\n");
                         }
                     }
                 }
@@ -749,7 +786,6 @@ namespace Universal_Updater
             Write(" (Y/N): ", ConsoleColor.Magenta);
         }
 
-        [STAThread]
         static void Main(string[] args)
         {
             if (!IsDependenciesInstalled("Microsoft Visual C++ 2012 Redistributable (x86)"))
@@ -765,6 +801,41 @@ namespace Universal_Updater
             StartUpdater();
             new OutputCapture();
             new Program();
+        }
+
+        static void PrintMachineInformation()
+        {
+            appendLog($"[SYSTEM INFO]\n");
+
+            // OS Description
+            appendLog($"Operating System: {RuntimeInformation.OSDescription}\n");
+
+            // Process Architecture
+            appendLog($"Process Architecture: {RuntimeInformation.ProcessArchitecture}\n");
+
+            // OS Architecture
+            appendLog($"OS Architecture: {RuntimeInformation.OSArchitecture}\n");
+
+            // Framework Description
+            appendLog($"Framework Description: {RuntimeInformation.FrameworkDescription}\n");
+
+            // Environment Information
+            appendLog($"Machine Name: {Environment.MachineName}\n");
+            appendLog($"User Domain Name: {Environment.UserDomainName}\n");
+            appendLog($"User Name: {Environment.UserName}\n");
+
+            // Number of processors
+            appendLog($"Processor Count: {Environment.ProcessorCount}\n");
+
+            // System page size
+            appendLog($"System Page Size: {Environment.SystemPageSize} bytes\n");
+
+            // Is 64-bit OS
+            appendLog($"Is 64-Bit OS: {Environment.Is64BitOperatingSystem}\n");
+
+            // Is 64-bit Process
+            appendLog($"Is 64-Bit Process: {Environment.Is64BitProcess}\n");
+            appendLog($"\n");
         }
 
         static void ConsoleStyle(string text, int line, ConsoleColor color = ConsoleColor.White)
@@ -822,6 +893,8 @@ namespace Universal_Updater
             appendLog("This app provided AS-IS without any warranty" + "\n");
             appendLog("GitHub: https://github.com/fadilfadz01/Universal_Updater" + "\n");
             appendLog("IUTool: https://learn.microsoft.com/en-us/previous-versions/mt131833(v=vs.85)" + "\n\n");
+
+            PrintMachineInformation();
         }
 
         public static string GetResourceFile(string resourceName, bool dump = false)
@@ -903,6 +976,53 @@ namespace Universal_Updater
                 return principal.IsInRole(WindowsBuiltInRole.Administrator);
             }
         }
+
+        public static bool IsNumberKeyOrNumpad(ConsoleKeyInfo keyInfo, char[] validKeys)
+        {
+            foreach (char c in validKeys)
+            {
+                if ((keyInfo.Key == ConsoleKey.D0 + (c - '0')) ||
+                    (keyInfo.Key == ConsoleKey.NumPad0 + (c - '0')))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static void LoadUpdateRules(string customPath = null)
+        {
+            var defaultPath = $@"{Environment.CurrentDirectory}\{toolsDirectory}";
+            if (!string.IsNullOrEmpty(customPath))
+            {
+                defaultPath = customPath;
+            }
+
+            var rulesFile = Path.Combine(defaultPath, "rules.json");
+            if (File.Exists(rulesFile))
+            {
+                try
+                {
+                    var data = File.ReadAllText(rulesFile);
+                    if (!string.IsNullOrEmpty(data))
+                    {
+                        updateRules = JsonConvert.DeserializeObject<UpdateRules>(data);
+                    }
+                    else
+                    {
+                        appendLog($"[RULES] rules file detected but it's empty\n{rulesFile}\n");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    appendLog(ex.Message + "\n");
+                }
+            }
+            else
+            {
+                appendLog($"[RULES] rules file not exists at: ${rulesFile}\n");
+            }
+        }
     }
 
     class FeaturesItem
@@ -947,5 +1067,13 @@ namespace Universal_Updater
             ReplaceStock = replaceStock;
             TargetStockName = targetStockName;
         }
+    }
+
+    class UpdateRules
+    {
+        public string RecommendedDate = "";
+        public bool ForceFilterMode = false;
+        public bool ForcePushAllMode = false;
+        public bool ForcePushFeatures = false;
     }
 }

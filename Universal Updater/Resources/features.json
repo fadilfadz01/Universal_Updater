@@ -98,5 +98,25 @@
         "TargetStockName": "Microsoft.Release_Production.Efiesp"
       }
     ]
+  },
+  {
+    "Name": "zSystemInfo",
+    "Description": "",
+    "Order": 0,
+    "DescriptionColor": 8,
+    "State": false,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "Microsoft.Diagnostics.SystemInfo",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      },
+      {
+        "PackageName": "Microsoft.Phone.Test.BaseOs.SecurityModelTestSupport",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      }
+    ]
   }
 ]
