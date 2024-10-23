@@ -87,28 +87,23 @@ namespace Universal_Updater
 
         public static async Task<bool> OfflineUpdate(string[] folderFiles)
         {
+            var cbsList = packageCBSExtension.Concat(packageCBSExtensionRemoval).ToArray();
+            var spkgList = packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
+
         filterPackages:
             Program.LoadUpdateRules(Program.packagePath);
             filteredPackages.Clear();
             var folderHasCBS = false;
             var folderHasSPKG = false;
-            for (int i = 0; i < packageCBSExtension.Length; i++)
+            var testCBSPackages = folderFiles.Where(k => k.ContainsAny(cbsList) && !k.ContainsAny(spkgList)).FirstOrDefault();
+            if (testCBSPackages != null)
             {
-                var testPackages = folderFiles.Where(k => k.IndexOf(packageCBSExtension[i], StringComparison.OrdinalIgnoreCase) >= 0 && !k.ContainsAny(packageSPKGExtension)).FirstOrDefault();
-                if (testPackages != null)
-                {
-                    folderHasCBS = true;
-                    break;
-                }
+                folderHasCBS = true;
             }
-            for (int i = 0; i < packageSPKGExtension.Length; i++)
+            var testSPKGPackages = folderFiles.Where(k => k.ContainsAny(spkgList)).FirstOrDefault();
+            if (testSPKGPackages != null)
             {
-                var testPackages = folderFiles.Where(k => k.IndexOf(packageSPKGExtension[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                if (testPackages != null)
-                {
-                    folderHasSPKG = true;
-                    break;
-                }
+                folderHasSPKG = true;
             }
 
             // We show this question only if folder has mixed packages
@@ -271,7 +266,6 @@ namespace Universal_Updater
             else
             {
                 Program.WriteLine($"\nAdding packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
-                var spkgList = packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
                 for (int j = 0; j < targetExtensionList.Length; j++)
                 {
                     var requiredPackages = folderFiles.Where(k => k.IndexOf(targetExtensionList[j], StringComparison.OrdinalIgnoreCase) >= 0);
