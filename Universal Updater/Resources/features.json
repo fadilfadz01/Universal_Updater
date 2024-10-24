@@ -2,6 +2,7 @@
   {
     "Name": "Remove RCS Feature",
     "Description": "(not recommended for regular updates)",
+    "Order": 0,
     "DescriptionColor": 12,
     "State": false,
     "ShouldPresent": false,
@@ -16,6 +17,7 @@
   {
     "Name": "ProjectA",
     "Description": "(Astoria)",
+    "Order": 0,
     "DescriptionColor": 8,
     "State": true,
     "ShouldPresent": false,
@@ -40,8 +42,9 @@
   {
     "Name": "Acer Service",
     "Description": "",
+    "Order": 0,
     "DescriptionColor": 8,
-    "State": true,
+    "State": false,
     "ShouldPresent": false,
     "FeaturePackages": [
       {
@@ -54,6 +57,7 @@
   {
     "Name": "Flight Signing",
     "Description": "",
+    "Order": 0,
     "DescriptionColor": 8,
     "State": true,
     "ShouldPresent": false,
@@ -68,6 +72,7 @@
   {
     "Name": "CMD Injector",
     "Description": "(Permanent)",
+    "Order": 0,
     "DescriptionColor": 8,
     "State": true,
     "ShouldPresent": false,
@@ -82,6 +87,7 @@
   {
     "Name": "Developer Menu",
     "Description": "",
+    "Order": 0,
     "DescriptionColor": 8,
     "State": true,
     "ShouldPresent": false,
@@ -90,6 +96,26 @@
         "PackageName": "Microsoft.Release_Production.Efiesp.Dev",
         "ReplaceStock": true,
         "TargetStockName": "Microsoft.Release_Production.Efiesp"
+      }
+    ]
+  },
+  {
+    "Name": "zSystemInfo",
+    "Description": "",
+    "Order": 0,
+    "DescriptionColor": 8,
+    "State": false,
+    "ShouldPresent": false,
+    "FeaturePackages": [
+      {
+        "PackageName": "Microsoft.Diagnostics.SystemInfo",
+        "ReplaceStock": false,
+        "TargetStockName": null
+      },
+      {
+        "PackageName": "Microsoft.Phone.Test.BaseOs.SecurityModelTestSupport",
+        "ReplaceStock": false,
+        "TargetStockName": null
       }
     ]
   }

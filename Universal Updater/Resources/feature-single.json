@@ -1,0 +1,15 @@
+{
+  "Name": "Feature name",
+  "Description": "",
+  "Order": 0,
+  "DescriptionColor": 8,
+  "State": true,
+  "ShouldPresent": false,
+  "FeaturePackages": [
+    {
+      "PackageName": "PackageName.cab",
+      "ReplaceStock": false,
+      "TargetStockName": null
+    }
+  ]
+}

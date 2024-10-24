@@ -63,6 +63,23 @@ namespace Universal_Updater
                     }
                     else
                     {
+                    hardResetArea:
+                        Program.WriteLine("Enabling hard reset...", ConsoleColor.Blue);
+                        var hardResetOutput = await RunBatWithLog("bcdedit.bat", FFUMountData);
+                        if (string.IsNullOrEmpty(hardResetOutput))
+                        {
+                            // Something went wrong
+                            var retryAnswer = showRetryQuestion("Enable hard reset failed!, retry?", "Skip");
+                            if (retryAnswer)
+                            {
+                                goto hardResetArea;
+                            }
+                            else
+                            {
+                                Program.WriteLine("Ensure to perform hard reset after you flash the FFU!", ConsoleColor.DarkYellow);
+                            }
+                        }
+
                     // Ask for save location and dismount
                     saveFFUArea:
                         string saveLocation = null;
@@ -90,10 +107,6 @@ namespace Universal_Updater
                                     goto dismountArea;
                                 }
                             }
-                            else
-                            {
-                                Program.WriteLine($"\nFFU should be saved to:\n{saveLocation}", ConsoleColor.Blue);
-                            }
                         }
                     }
                 }
@@ -103,21 +116,28 @@ namespace Universal_Updater
         public static async Task dismountFFUQuestion(FFUEntry FFUMountData)
         {
             Program.WriteLine($"\nDo you want to dismount the FFU?", ConsoleColor.DarkYellow);
-            Program.WriteLine("1. Dismount");
-            Program.WriteLine("2. Exit");
+            Program.WriteLine("1. Save & Dismount");
+            Program.WriteLine("2. Dismount");
+            Program.WriteLine("3. Exit");
             Program.Write("Choice: ", ConsoleColor.Magenta);
             ConsoleKeyInfo dismountAction;
             do
             {
                 dismountAction = Console.ReadKey(true);
             }
-            while (dismountAction.KeyChar != '1' && dismountAction.KeyChar != '2');
+            while (!Program.IsNumberKeyOrNumpad(dismountAction, new char[] { '1', '2', '3' }));
             Program.Write(dismountAction.KeyChar.ToString() + "\n");
 
+            string saveLocation = null;
             if (dismountAction.KeyChar == '1')
             {
+                saveLocation = await ShowSaveFileDialogAsync();
+            }
+
+            if (dismountAction.KeyChar != '3')
+            {
             dismountOnlyArea:
-                var dismountState = await dismountFFU(FFUMountData, null);
+                var dismountState = await dismountFFU(FFUMountData, saveLocation);
                 if (!dismountState)
                 {
                     if (showRetryQuestion("Dismount FFU failed!, retry?"))
@@ -265,7 +285,14 @@ namespace Universal_Updater
             {
                 if (!FFUMountData.TempMount)
                 {
-                    Program.WriteLine("Dismounting FFU...", ConsoleColor.Blue);
+                    if (string.IsNullOrEmpty(outputFFU))
+                    {
+                        Program.WriteLine("Dismounting FFU...", ConsoleColor.Blue);
+                    }
+                    else
+                    {
+                        Program.WriteLine("Dismounting & Saving FFU...", ConsoleColor.Blue);
+                    }
                 }
                 else
                 {
@@ -297,6 +324,11 @@ namespace Universal_Updater
             else
             {
                 Program.appendLog($"Dismounted successfully\n");
+            }
+
+            if (!string.IsNullOrEmpty(outputFFU))
+            {
+                Program.WriteLine($"\nFFU should be saved to:\n{outputFFU}", ConsoleColor.Blue);
             }
             return true;
         }
@@ -345,6 +377,7 @@ namespace Universal_Updater
                         else if (retryAnswer == '2')
                         {
                             goto installArea;
+                            //goto stageArea;
                         }
                         else
                         {
@@ -375,6 +408,50 @@ namespace Universal_Updater
                         goto exitProcessArea;
                     }
                 }
+
+            //stageArea:
+            //    Program.WriteLine("Staging Packages...", ConsoleColor.Blue);
+            //    var stage = await RunProcessWithLog("updateapp.exe", $"stage \"{packagePath}\"");
+            //    if (stage == null)
+            //    {
+            //        // Something went wrong
+            //        var retryAnswer = showRetryQuestionWithContinue("Staging packages failed!, retry?");
+            //        if (retryAnswer == '1')
+            //        {
+            //            goto stageArea;
+            //        }
+            //        else if (retryAnswer == '2')
+            //        {
+            //            goto commitArea;
+            //        }
+            //        else
+            //        {
+            //            userExitTheProcess = true;
+            //            goto exitProcessArea;
+            //        }
+            //    }
+
+            //commitArea:
+            //    Program.WriteLine("Committing Packages...", ConsoleColor.Blue);
+            //    var commit = await RunProcessWithLog("updateapp.exe", "commit migratedata noreboot");
+            //    if (commit == null)
+            //    {
+            //        // Something went wrong
+            //        var retryAnswer = showRetryQuestionWithContinue("Commit failed!, retry?");
+            //        if (retryAnswer == '1')
+            //        {
+            //            goto commitArea;
+            //        }
+            //        else if (retryAnswer == '2')
+            //        {
+            //            goto cleanupArea;
+            //        }
+            //        else
+            //        {
+            //            userExitTheProcess = true;
+            //            goto exitProcessArea;
+            //        }
+            //    }
 
             cleanupArea:
                 Program.WriteLine("Cleaning up...", ConsoleColor.Blue);
@@ -439,6 +516,68 @@ namespace Universal_Updater
             return true;
         }
 
+        public static async Task<string> RunBatWithLog(string batfile, FFUEntry FFUMountData, bool ignoreErrors = false)
+        {
+            Program.showTitleWaitMessage(true, batfile);
+            var mountedPath = FFUMountData.MountPath.TrimEnd('\\');
+            var batProcess = new Process();
+
+            // We have to do it this way if process is x86 running on x64 host
+            var cmdFullFileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                                      Environment.Is64BitOperatingSystem && !Environment.Is64BitProcess
+                                          ? @"Sysnative\cmd.exe"
+                                          : @"System32\cmd.exe");
+
+            var targetBat = $@"{Environment.CurrentDirectory}\{Program.toolsDirectory}\{batfile}";
+            string args = $"/c \"\"{targetBat}\" \"{mountedPath}\" \"{Program.logFile}\"\"";
+            Program.appendLog($"[CMD DETAILS]\nIf you see Sysnative in the path this fine and expected\n");
+            Program.appendLog($"CMD PATH: {cmdFullFileName}\n");
+            Program.appendLog($"CMD ARGS: {args}\n");
+            batProcess.StartInfo.FileName = cmdFullFileName;
+            batProcess.StartInfo.Arguments = args;
+            batProcess.StartInfo.RedirectStandardInput = true;
+            batProcess.StartInfo.RedirectStandardOutput = true;
+            batProcess.StartInfo.RedirectStandardError = true;
+            batProcess.StartInfo.UseShellExecute = false;
+            batProcess.StartInfo.CreateNoWindow = true;
+
+            string output = "";
+            bool hasError = false;
+            Program.WriteLine($"[{batfile}]\n", ConsoleColor.DarkYellow);
+            batProcess.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    Program.resetCursorPosition();
+                    Program.WriteLine($"{e.Data}", ConsoleColor.DarkGray, true);
+                    output += $"{e.Data}\n";
+                }
+            };
+            batProcess.ErrorDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    Program.resetCursorPosition();
+                    Program.WriteLine($"{e.Data}", ConsoleColor.Red, true);
+                    output += $"{e.Data}\n";
+                    hasError = true;
+                }
+            };
+
+            batProcess.Start();
+            batProcess.BeginOutputReadLine();
+            batProcess.BeginErrorReadLine();
+            batProcess.WaitForExit();
+            if (batProcess.ExitCode != 0)
+            {
+                Program.WriteLine($"Process '{batfile}' has errors, check the log.", ConsoleColor.Red);
+                hasError = true;
+            }
+
+            Program.showTitleWaitMessage(false);
+            return !hasError || ignoreErrors ? output : null;
+        }
+
         public static bool showRetryQuestion(string message, string exitText = "Exit", ConsoleColor color = ConsoleColor.DarkYellow)
         {
             Program.WriteLine($"\n{message}", color);
@@ -450,7 +589,7 @@ namespace Universal_Updater
             {
                 generalAction = Console.ReadKey(true);
             }
-            while (generalAction.KeyChar != '1' && generalAction.KeyChar != '2');
+            while (!Program.IsNumberKeyOrNumpad(generalAction, new char[] { '1', '2' }));
             Program.Write(generalAction.KeyChar.ToString() + "\n");
 
             return generalAction.KeyChar == '1';
@@ -467,7 +606,7 @@ namespace Universal_Updater
             {
                 generalAction = Console.ReadKey(true);
             }
-            while (generalAction.KeyChar != '1' && generalAction.KeyChar != '2' && generalAction.KeyChar != '3');
+            while (!Program.IsNumberKeyOrNumpad(generalAction, new char[] { '1', '2', '3' }));
             Program.Write(generalAction.KeyChar.ToString() + "\n");
 
             return generalAction.KeyChar;

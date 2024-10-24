@@ -23,24 +23,28 @@ namespace Universal_Updater
         static readonly string[] knownPackages = { "ms_commsenhancementglobal.mainos", "ms_commsmessagingglobal.mainos", "microsoftphonefm.platformmanifest.efiesp", "microsoftphonefm.platformmanifest.mainos", "microsoftphonefm.platformmanifest.updateos", "UserInstallableFM.PlatformManifest" };
         public static FFUEntry FFUMountData = null;
         static readonly string[] skippedPackages = { };
-        static readonly string[] packageCBSExtension = { ".cab", ".cbs_" };
-        static readonly string[] packageSPKGExtension = { ".spkg", ".spkg_" };
+        static readonly string[] packageCBSExtension = { ".cab", ".cbs_", "cbs." };
+        static readonly string[] packageCBSExtensionRemoval = { ".cbsr", "cbsr." };
+        static readonly string[] packageSPKGExtension = { ".spkg", ".spkg_", "spkg." };
+        static readonly string[] packageSPKGExtensionRemoval = { ".spkr", "spkr." };
         static Uri downloadFile;
 
         public static string[] getExtensionsList()
         {
             if (!filterCBSPackagesOnly)
             {
-                return packageSPKGExtension;
+                return packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
             }
-            return packageCBSExtension;
+            return packageCBSExtension.Concat(packageCBSExtensionRemoval).ToArray();
         }
 
         public static bool OnlineUpdate(string updateBuild)
         {
             // For pre-built in packages currently check for both CBS or SPKG,
             // those suppose to be sorted already for SPGK or CBS
-            var targetExtensionList = packageCBSExtension.Concat(packageSPKGExtension).ToArray();
+            var cbsList = packageCBSExtension.Concat(packageCBSExtensionRemoval).ToArray();
+            var spkgList = packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
+            var targetExtensionList = cbsList.Concat(spkgList).ToArray();
 
             // Get file content only once
             var targetListFile = Program.GetResourceFile($"{updateBuild}.txt").Split('\n');
@@ -83,27 +87,24 @@ namespace Universal_Updater
 
         public static async Task<bool> OfflineUpdate(string[] folderFiles)
         {
+            var cbsList = packageCBSExtension.Concat(packageCBSExtensionRemoval).ToArray();
+            var spkgList = packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
+
         filterPackages:
+            int totalRemovalPackages = 0;
+            Program.LoadUpdateRules(Program.packagePath);
             filteredPackages.Clear();
             var folderHasCBS = false;
             var folderHasSPKG = false;
-            for (int i = 0; i < packageCBSExtension.Length; i++)
+            var testCBSPackages = folderFiles.Where(k => k.ContainsAny(cbsList) && !k.ContainsAny(spkgList)).FirstOrDefault();
+            if (testCBSPackages != null)
             {
-                var testPackages = folderFiles.Where(k => k.IndexOf(packageCBSExtension[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                if (testPackages != null)
-                {
-                    folderHasCBS = true;
-                    break;
-                }
+                folderHasCBS = true;
             }
-            for (int i = 0; i < packageSPKGExtension.Length; i++)
+            var testSPKGPackages = folderFiles.Where(k => k.ContainsAny(spkgList)).FirstOrDefault();
+            if (testSPKGPackages != null)
             {
-                var testPackages = folderFiles.Where(k => k.IndexOf(packageSPKGExtension[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                if (testPackages != null)
-                {
-                    folderHasSPKG = true;
-                    break;
-                }
+                folderHasSPKG = true;
             }
 
             // We show this question only if folder has mixed packages
@@ -121,7 +122,7 @@ namespace Universal_Updater
                 {
                     packagesType = Console.ReadKey(true);
                 }
-                while (packagesType.KeyChar != '1' && packagesType.KeyChar != '2');
+                while (!Program.IsNumberKeyOrNumpad(packagesType, new char[] { '1', '2' }));
                 Program.Write(packagesType.KeyChar.ToString() + "\n");
                 filterCBSPackagesOnly = packagesType.KeyChar == '1';
             }
@@ -131,18 +132,27 @@ namespace Universal_Updater
                 filterCBSPackagesOnly = folderHasCBS;
             }
 
+
+
             ConsoleKeyInfo packagesFilterAction = default(ConsoleKeyInfo);
-            // Allow user to push all package if he want
-            Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
-            Program.WriteLine("1. Filter packages", ConsoleColor.Green);
-            Program.WriteLine("2. Include all", ConsoleColor.DarkYellow);
-            Program.Write("Choice: ", ConsoleColor.Magenta);
-            do
+            if (!Program.updateRules.ForceFilterMode && !Program.updateRules.ForcePushAllMode)
             {
-                packagesFilterAction = Console.ReadKey(true);
+                // Allow user to push all package if he want
+                Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
+                Program.WriteLine("1. Filter packages", ConsoleColor.Green);
+                Program.WriteLine("2. Include all", ConsoleColor.DarkYellow);
+                Program.Write("Choice: ", ConsoleColor.Magenta);
+                do
+                {
+                    packagesFilterAction = Console.ReadKey(true);
+                }
+                while (!Program.IsNumberKeyOrNumpad(packagesFilterAction, new char[] { '1', '2' }));
+                Program.Write(packagesFilterAction.KeyChar.ToString() + "\n");
             }
-            while (packagesFilterAction.KeyChar != '1' && packagesFilterAction.KeyChar != '2');
-            Program.Write(packagesFilterAction.KeyChar.ToString() + "\n");
+            else
+            {
+                Program.appendLog("Always filter file detected, forcing packages filter\n");
+            }
 
             var targetExtensionList = getExtensionsList();
             var previewType = "cbs";
@@ -151,7 +161,7 @@ namespace Universal_Updater
                 previewType = "spkg";
             }
 
-            if (Program.pushToFFU)
+            if (Program.pushToFFU && FFUMountData == null)
             {
                 Program.WriteLine("");
             // For FFU we start mount from here
@@ -188,11 +198,12 @@ namespace Universal_Updater
                     }
                 }
 
+                await GetDeviceInfo.printFFUDetails(FFUMountData);
                 Program.Write("\nPUSH MODE: ", ConsoleColor.Gray);
                 Program.WriteLine((PushPackages.useOldTools ? "FFU (SPKG)" : "FFU (CBS)"), (PushPackages.useOldTools ? ConsoleColor.DarkYellow : ConsoleColor.Blue));
             }
 
-            if (packagesFilterAction.KeyChar == '1')
+            if (Program.updateRules.ForceFilterMode || packagesFilterAction.KeyChar == '1')
             {
                 Program.WriteLine($"\nFiltering packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
                 Program.appendLog("\n[INSTALLED PACKAGES]\n");
@@ -228,18 +239,15 @@ namespace Universal_Updater
                             bool skipThisPackage = false;
                             if (filterCBSPackagesOnly)
                             {
-                                foreach (var spkgExt in packageSPKGExtension)
+                                if (knownPackage.ContainsAny(spkgList))
                                 {
-                                    if (knownPackage.IndexOf(spkgExt, StringComparison.OrdinalIgnoreCase) >= 0)
-                                    {
-                                        skipThisPackage = true;
-                                        break;
-                                    }
+                                    skipThisPackage = true;
+                                    break;
                                 }
                             }
                             else
                             {
-                                if (knownPackage.IndexOf(".cbs_", StringComparison.OrdinalIgnoreCase) >= 0)
+                                if (!knownPackage.ContainsAny(spkgList))
                                 {
                                     skipThisPackage = true;
                                     break;
@@ -252,7 +260,45 @@ namespace Universal_Updater
                         }
                     }
                 }
+            }
+            else
+            {
+                Program.WriteLine($"\nAdding packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
+                for (int j = 0; j < targetExtensionList.Length; j++)
+                {
+                    var requiredPackages = folderFiles.Where(k => k.IndexOf(targetExtensionList[j], StringComparison.OrdinalIgnoreCase) >= 0);
+                    if (requiredPackages != null)
+                    {
+                        foreach (var requiredPackage in requiredPackages)
+                        {
+                            bool skipThisPackage = false;
+                            if (filterCBSPackagesOnly)
+                            {
+                                if (requiredPackage.ContainsAny(spkgList))
+                                {
+                                    skipThisPackage = true;
+                                    break;
+                                }
+                            }
+                            else
+                            {
+                                if (!requiredPackage.ContainsAny(spkgList))
+                                {
+                                    skipThisPackage = true;
+                                    break;
+                                }
+                            }
+                            if (!skipThisPackage && !shouldSkip(requiredPackage))
+                            {
+                                filteredPackages.Add(requiredPackage);
+                            }
+                        }
+                    }
+                }
+            }
 
+            if (filteredPackages.Count > 0)
+            {
                 // Features packages
                 foreach (var feature in Program.GlobalFeaturesList)
                 {
@@ -271,7 +317,6 @@ namespace Universal_Updater
                                         var stockName = feature.FeaturePackages[i].TargetStockName;
                                         for (int j = 0; j < targetExtensionList.Length; j++)
                                         {
-                                            // Packages fetched from device info has `,`, from FFU usually clean
                                             var checkName = stockName + targetExtensionList[j];
                                             var packageRemoval = folderFiles.Where(a => a.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
                                             if (packageRemoval != null)
@@ -311,48 +356,7 @@ namespace Universal_Updater
                         }
                     }
                 }
-            }
-            else
-            {
-                Program.WriteLine($"\nAdding packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
-                for (int j = 0; j < targetExtensionList.Length; j++)
-                {
-                    var requiredPackages = folderFiles.Where(k => k.IndexOf(targetExtensionList[j], StringComparison.OrdinalIgnoreCase) >= 0);
-                    if (requiredPackages != null)
-                    {
-                        foreach (var requiredPackage in requiredPackages)
-                        {
-                            bool skipThisPackage = false;
-                            if (filterCBSPackagesOnly)
-                            {
-                                foreach (var spkgExt in packageSPKGExtension)
-                                {
-                                    if (requiredPackage.IndexOf(spkgExt, StringComparison.OrdinalIgnoreCase) >= 0)
-                                    {
-                                        skipThisPackage = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                if (requiredPackage.IndexOf(".cbs_", StringComparison.OrdinalIgnoreCase) >= 0)
-                                {
-                                    skipThisPackage = true;
-                                    break;
-                                }
-                            }
-                            if (!skipThisPackage && !shouldSkip(requiredPackage))
-                            {
-                                filteredPackages.Add(requiredPackage);
-                            }
-                        }
-                    }
-                }
-            }
 
-            if (filteredPackages.Count > 0)
-            {
                 var testCabFile = filteredPackages.FirstOrDefault();
                 var certificateIssuer = "";
                 var certificateDate = "";
@@ -451,7 +455,15 @@ namespace Universal_Updater
                             Program.Write("\n[IMPORTANT] ", ConsoleColor.DarkRed);
                             Program.Write("\nPackages expected to be ", ConsoleColor.DarkYellow);
                             Program.WriteLine("(Test Signed)", ConsoleColor.Blue);
-                            Program.WriteLine("Set your device to the required date", ConsoleColor.DarkYellow);
+                            if (string.IsNullOrEmpty(Program.updateRules.RecommendedDate))
+                            {
+                                Program.WriteLine("Set your device to the required date", ConsoleColor.DarkYellow);
+                            }
+                            else
+                            {
+                                Program.Write("Set your device to: ", ConsoleColor.DarkYellow);
+                                Program.WriteLine(Program.updateRules.RecommendedDate, ConsoleColor.Green);
+                            }
                         }
                     }
                 }
@@ -461,8 +473,48 @@ namespace Universal_Updater
                     Program.WriteLine($" ({dtFmt})", ConsoleColor.DarkGray);
                 }
 
+                try
+                {
+                    // Count removal packages 
+                    if (filterCBSPackagesOnly)
+                    {
+                        var cbsRemovals = filteredPackages.Where(k => k.ContainsAny(packageCBSExtensionRemoval));
+                        if (cbsRemovals != null)
+                        {
+                            totalRemovalPackages = cbsRemovals.Count();
+                            Program.appendLog("\n[REMOVALS CBS]\n");
+                            foreach (var cbsRemovalItem in cbsRemovals)
+                            {
+                                Program.appendLog($"{cbsRemovalItem}\n");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var spkgRemovals = filteredPackages.Where(k => k.ContainsAny(packageSPKGExtensionRemoval));
+                        if (spkgRemovals != null)
+                        {
+                            totalRemovalPackages = spkgRemovals.Count();
+                            Program.appendLog("\n[REMOVALS SPKG]\n");
+                            foreach (var spkgRemovalItem in spkgRemovals)
+                            {
+                                Program.appendLog($"{spkgRemovalItem}\n");
+                            }
+                        }
+                    }
+                }
+                catch (Exception exr)
+                {
+                    Program.appendLog($"{exr.Message}\n");
+                }
+
                 Program.Write("\nTotal expected packages: ", ConsoleColor.DarkGray);
                 Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
+                if (totalRemovalPackages > 0)
+                {
+                    Program.Write("Removal packages: ", ConsoleColor.DarkGray);
+                    Program.WriteLine(totalRemovalPackages.ToString(), ConsoleColor.Red);
+                }
                 Program.WriteLine("1. Push packages", ConsoleColor.Green);
                 Program.WriteLine("2. Retry");
                 Program.WriteLine("3. Exit");
@@ -472,7 +524,7 @@ namespace Universal_Updater
                 {
                     packagesAction = Console.ReadKey(true);
                 }
-                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2' && packagesAction.KeyChar != '3');
+                while (!Program.IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2', '3' }));
                 Program.Write(packagesAction.KeyChar.ToString() + "\n");
 
                 if (packagesAction.KeyChar == '1')
@@ -481,7 +533,7 @@ namespace Universal_Updater
                     for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
                     {
                         Program.resetCursorPosition();
-                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
+                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray, true);
                         File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
                     }
                 }
@@ -506,7 +558,7 @@ namespace Universal_Updater
                 {
                     packagesAction = Console.ReadKey(true);
                 }
-                while (packagesAction.KeyChar != '1' && packagesAction.KeyChar != '2');
+                while (!Program.IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
                 Program.Write(packagesAction.KeyChar.ToString() + "\n");
                 if (packagesAction.KeyChar == '1')
                 {
@@ -594,13 +646,21 @@ namespace Universal_Updater
 
             if (!onlinePackage)
             {
-                FileInfo fileInfo = new FileInfo(package);
-                long sizeInBytes = fileInfo.Length;
-
-                if (sizeInBytes <= 0)
+                if (File.Exists(package))
                 {
-                    // Package has 0MB size, not a valid package
-                    Program.appendLog($"Package ({package}) skipped!, 0MB size, not a valid package\n");
+                    FileInfo fileInfo = new FileInfo(package);
+                    long sizeInBytes = fileInfo.Length;
+
+                    if (sizeInBytes <= 0)
+                    {
+                        // Package has 0MB size, not a valid package
+                        Program.appendLog($"Package ({package}) skipped!, 0MB size, not a valid package\n");
+                        return true;
+                    }
+                }
+                else
+                {
+                    Program.appendLog($"Package file ({package}) is no longer exits\n");
                     return true;
                 }
             }

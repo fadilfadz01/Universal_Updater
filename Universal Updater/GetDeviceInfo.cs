@@ -8,9 +8,13 @@ using System.Management;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using ManagedWimLib;
+using Microsoft.Win32;
+using static System.Net.Mime.MediaTypeNames;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement;
 
 namespace Universal_Updater
 {
@@ -139,6 +143,94 @@ namespace Universal_Updater
             return deviceInfo;
         }
 
+        public static async Task printFFUDetails(FFUEntry FFUMountData)
+        {
+            string mountedDrive = FFUMountData.MountPath.TrimEnd('\\'); // Change this to your mounted drive letter
+            string softwareHivePath = System.IO.Path.Combine(mountedDrive, @"Windows\System32\config\SOFTWARE");
+            Program.appendLog($"[FFU] Reading FFU registry at:\n{softwareHivePath}\n");
+            if (File.Exists(softwareHivePath))
+            {
+                List<string> labels = new List<string>();
+                List<string> values = new List<string>();
+
+                try
+                {
+                    var FFUInfoOutput = await PushPackages.RunBatWithLog("ffuinfo.bat", FFUMountData, true);
+                    if (!string.IsNullOrEmpty(FFUInfoOutput))
+                    {
+                        var FFUInfoOutputData = FFUInfoOutput.Split('\n');
+                        var skipList = new string[] { "SystemRoot", "BuildGUID", "PhoneOEMSupportLink", "InstallDate", "EditionID", "PhoneSupportLink", "SoftwareType", "RegisteredOrganization", "PhoneSupportPhoneNumber", "PhoneMobileOperatorDisplayName" };
+                        foreach (var InfoLine in FFUInfoOutputData)
+                        {
+                            if (InfoLine.IndexOf(":") >= 0)
+                            {
+                                var InfoLineSplit = InfoLine.Split(':');
+                                var label = InfoLineSplit[0].Trim();
+                                var value = InfoLineSplit[1].Trim();
+                                if (!label.ContainsAny(skipList))
+                                {
+                                    labels.Add(label);
+                                    values.Add(value);
+                                }
+                            }
+                        }
+
+                    }
+                    else
+                    {
+                        Program.WriteLine("Failed to access the FFU registry, check logs.", ConsoleColor.DarkYellow);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Program.WriteLine(ex.Message, ConsoleColor.DarkYellow);
+                }
+
+                var OEMInputPath = mountedDrive + "\\Windows\\ImageUpdate\\OEMInput.xml";
+                var OEMDevicePlatformPath = mountedDrive + "\\Windows\\ImageUpdate\\OEMDevicePlatform.xml";
+                if (File.Exists(OEMDevicePlatformPath))
+                {
+                    string[] platID = File.ReadAllLines(OEMDevicePlatformPath).Where(i => i.Contains("<DevicePlatformID>")).ToArray();
+                    labels.Add("PlatformID");
+                    values.Add(platID[0].Split('>')[1].Split('<')[0]);
+                }
+
+                if (File.Exists(OEMInputPath))
+                {
+                    string[] res = File.ReadAllLines(OEMInputPath).Where(i => i.Contains("<Resolution>")).ToArray();
+                    labels.Add("Resolution");
+                    values.Add(res[0].Split('>')[1].Split('<')[0]);
+                }
+
+                if (labels.Count > 0)
+                {
+                    Program.WriteLine("");
+                    Program.WriteLine($"\n[FFU INFO]", ConsoleColor.DarkGray);
+
+                    int maxLabelWidth = 0;
+                    foreach (var label in labels)
+                    {
+                        if (label.Length > maxLabelWidth)
+                            maxLabelWidth = label.Length;
+                    }
+                    for (int i = 0; i < labels.Count; i++)
+                    {
+                        Program.Write($"{labels[i].PadRight(maxLabelWidth)}: ", ConsoleColor.Gray);
+                        Program.WriteLine($"{values[i]}");
+                    }
+                }
+                else
+                {
+                    // Something is wrong
+                    Program.WriteLine("FFU info empty!, check logs.", ConsoleColor.DarkYellow);
+                }
+            }
+            else
+            {
+                Program.appendLog($"Cannot find or read FFU registry path at:\n{softwareHivePath}\n");
+            }
+        }
+
         public static async Task<List<string>> GetInstalledPackagesFromFFU(FFUEntry FFUMountData)
         {
             List<string> installedPackages = new List<string>();
@@ -215,10 +307,11 @@ namespace Universal_Updater
                                 }
                             }
                         }
+                        Wim.GlobalCleanup();
                     }
                     catch (Exception ex)
                     {
-                        Program.WriteLine("Error reading WIM file: " + ex.Message, ConsoleColor.Red);
+                        Program.WriteLine(ex.Message, ConsoleColor.Red);
                     }
                 }
                 else
@@ -266,7 +359,7 @@ namespace Universal_Updater
                 }
                 Directory.CreateDirectory(wimPackagesTemp);
 
-                wimHandle.ExtractPath(i, $"{Environment.CurrentDirectory}\\{wimPackagesTemp}", $"{PathClean}", ExtractFlags.NO_PRESERVE_DIR_STRUCTURE);
+                wimHandle.ExtractPath(i, $"{Environment.CurrentDirectory}\\{wimPackagesTemp}", $"{PathClean}", ExtractFlags.NO_ACLS | ExtractFlags.NO_ATTRIBUTES | ExtractFlags.NO_PRESERVE_DIR_STRUCTURE);
 
                 var fullPathCheck = $"{wimPackagesTemp}\\" + Path.GetFileName(PathClean);
                 if (Directory.Exists(fullPathCheck))
@@ -345,7 +438,7 @@ namespace Universal_Updater
         {
             foreach (var value in values)
             {
-                if (str.Contains(value))
+                if (str.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0)
                     return true;
             }
             return false;
