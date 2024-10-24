@@ -157,7 +157,6 @@ namespace Universal_Updater
 
         static async void StartUpdater()
         {
-            logFile = prepareLogFile("universal_updater.exe");
             appendAppInfoToLog();
             ConsoleStyle("", 0, ConsoleColor.Blue);
 
@@ -786,19 +785,50 @@ namespace Universal_Updater
             Write(" (Y/N): ", ConsoleColor.Magenta);
         }
 
+
+        static System.Threading.Mutex mutex = new System.Threading.Mutex(true, "9245fe4a-universal-updater-9c1a04247482");
         static void Main(string[] args)
         {
+            bool allowToRun = true;
+
+            logFile = prepareLogFile("universal_updater.exe");
+
             if (!IsDependenciesInstalled("Microsoft Visual C++ 2012 Redistributable (x86)"))
             {
                 WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2012.Redistributable.(x86)'", ConsoleColor.Red);
-                return;
+                allowToRun = false;
             }
             else if (!IsDependenciesInstalled("Microsoft Visual C++ 2013 Redistributable (x86)"))
             {
                 WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2013.Redistributable.(x86)'", ConsoleColor.Red);
-                return;
+                allowToRun = false;
             }
-            StartUpdater();
+
+            try
+            {
+                if (!mutex.WaitOne(TimeSpan.Zero, true))
+                {
+                    WriteLine("Another instance of the application is already running.", ConsoleColor.Red);
+                    allowToRun = false;
+                }
+            }
+            catch (Exception ex)
+            {
+
+            }
+
+            if (allowToRun)
+            {
+                StartUpdater();
+            }
+            else
+            {
+                Task.Run(async () =>
+                {
+                    await Task.Delay(10000);
+                    Environment.Exit(0);
+                });
+            }
             new OutputCapture();
             new Program();
         }
