@@ -307,6 +307,7 @@ namespace Universal_Updater
                                 }
                             }
                         }
+                        Wim.GlobalCleanup();
                     }
                     catch (Exception ex)
                     {

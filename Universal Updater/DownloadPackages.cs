@@ -91,6 +91,7 @@ namespace Universal_Updater
             var spkgList = packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
 
         filterPackages:
+            int totalRemovalPackages = 0;
             Program.LoadUpdateRules(Program.packagePath);
             filteredPackages.Clear();
             var folderHasCBS = false;
@@ -238,18 +239,15 @@ namespace Universal_Updater
                             bool skipThisPackage = false;
                             if (filterCBSPackagesOnly)
                             {
-                                foreach (var spkgExt in packageSPKGExtension)
+                                if (knownPackage.ContainsAny(spkgList))
                                 {
-                                    if (knownPackage.IndexOf(spkgExt, StringComparison.OrdinalIgnoreCase) >= 0)
-                                    {
-                                        skipThisPackage = true;
-                                        break;
-                                    }
+                                    skipThisPackage = true;
+                                    break;
                                 }
                             }
                             else
                             {
-                                if (knownPackage.IndexOf(".cbs_", StringComparison.OrdinalIgnoreCase) >= 0)
+                                if (!knownPackage.ContainsAny(spkgList))
                                 {
                                     skipThisPackage = true;
                                     break;
@@ -475,8 +473,48 @@ namespace Universal_Updater
                     Program.WriteLine($" ({dtFmt})", ConsoleColor.DarkGray);
                 }
 
+                try
+                {
+                    // Count removal packages 
+                    if (filterCBSPackagesOnly)
+                    {
+                        var cbsRemovals = filteredPackages.Where(k => k.ContainsAny(packageCBSExtensionRemoval));
+                        if (cbsRemovals != null)
+                        {
+                            totalRemovalPackages = cbsRemovals.Count();
+                            Program.appendLog("\n[REMOVALS CBS]\n");
+                            foreach (var cbsRemovalItem in cbsRemovals)
+                            {
+                                Program.appendLog($"{cbsRemovalItem}\n");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        var spkgRemovals = filteredPackages.Where(k => k.ContainsAny(packageSPKGExtensionRemoval));
+                        if (spkgRemovals != null)
+                        {
+                            totalRemovalPackages = spkgRemovals.Count();
+                            Program.appendLog("\n[REMOVALS SPKG]\n");
+                            foreach (var spkgRemovalItem in spkgRemovals)
+                            {
+                                Program.appendLog($"{spkgRemovalItem}\n");
+                            }
+                        }
+                    }
+                }
+                catch (Exception exr)
+                {
+                    Program.appendLog($"{exr.Message}\n");
+                }
+
                 Program.Write("\nTotal expected packages: ", ConsoleColor.DarkGray);
                 Program.WriteLine(filteredPackages.Count.ToString(), ConsoleColor.DarkYellow);
+                if (totalRemovalPackages > 0)
+                {
+                    Program.Write("Removal packages: ", ConsoleColor.DarkGray);
+                    Program.WriteLine(totalRemovalPackages.ToString(), ConsoleColor.Red);
+                }
                 Program.WriteLine("1. Push packages", ConsoleColor.Green);
                 Program.WriteLine("2. Retry");
                 Program.WriteLine("3. Exit");
@@ -495,7 +533,7 @@ namespace Universal_Updater
                     for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
                     {
                         Program.resetCursorPosition();
-                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray);
+                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray, true);
                         File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
                     }
                 }
