@@ -646,13 +646,21 @@ namespace Universal_Updater
 
             if (!onlinePackage)
             {
-                FileInfo fileInfo = new FileInfo(package);
-                long sizeInBytes = fileInfo.Length;
-
-                if (sizeInBytes <= 0)
+                if (File.Exists(package))
                 {
-                    // Package has 0MB size, not a valid package
-                    Program.appendLog($"Package ({package}) skipped!, 0MB size, not a valid package\n");
+                    FileInfo fileInfo = new FileInfo(package);
+                    long sizeInBytes = fileInfo.Length;
+
+                    if (sizeInBytes <= 0)
+                    {
+                        // Package has 0MB size, not a valid package
+                        Program.appendLog($"Package ({package}) skipped!, 0MB size, not a valid package\n");
+                        return true;
+                    }
+                }
+                else
+                {
+                    Program.appendLog($"Package file ({package}) is no longer exits\n");
                     return true;
                 }
             }
