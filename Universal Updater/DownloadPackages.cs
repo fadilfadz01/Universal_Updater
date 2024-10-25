@@ -297,66 +297,66 @@ namespace Universal_Updater
                 }
             }
 
-            if (filteredPackages.Count > 0)
+            // Features packages
+            foreach (var feature in Program.GlobalFeaturesList)
             {
-                // Features packages
-                foreach (var feature in Program.GlobalFeaturesList)
+                if (feature.ShouldPresent)
                 {
-                    if (feature.ShouldPresent)
+                    if (feature.State)
                     {
-                        if (feature.State)
+                        for (int i = 0; i < feature.FeaturePackages.Length; i++)
                         {
-                            for (int i = 0; i < feature.FeaturePackages.Length; i++)
+                            var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                            if (requiredPackages != null)
                             {
-                                var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                                if (requiredPackages != null)
+                                if (feature.FeaturePackages[i].ReplaceStock)
                                 {
-                                    if (feature.FeaturePackages[i].ReplaceStock)
+                                    // Ensure to remove stock on from the list
+                                    var stockName = feature.FeaturePackages[i].TargetStockName;
+                                    for (int j = 0; j < targetExtensionList.Length; j++)
                                     {
-                                        // Ensure to remove stock on from the list
-                                        var stockName = feature.FeaturePackages[i].TargetStockName;
-                                        for (int j = 0; j < targetExtensionList.Length; j++)
+                                        var checkName = stockName + targetExtensionList[j];
+                                        var packageRemoval = folderFiles.Where(a => a.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                                        if (packageRemoval != null)
                                         {
-                                            var checkName = stockName + targetExtensionList[j];
-                                            var packageRemoval = folderFiles.Where(a => a.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                                            if (packageRemoval != null)
+                                            if (filteredPackages.Remove(packageRemoval))
                                             {
-                                                if (filteredPackages.Remove(packageRemoval))
-                                                {
-                                                    Program.WriteLine($"Stock ({stockName}) replaced with feature", ConsoleColor.DarkYellow);
-                                                    Program.appendLog($"Package ({stockName}) replaced with feature ({feature.FeaturePackages[i].PackageName})\n");
-                                                }
-                                                else
-                                                {
-                                                    Program.WriteLine($"Stock ({stockName}) is not presented in filtered list!", ConsoleColor.DarkYellow);
-                                                }
+                                                Program.WriteLine($"Stock ({stockName}) replaced with feature", ConsoleColor.DarkYellow);
+                                                Program.appendLog($"Package ({stockName}) replaced with feature ({feature.FeaturePackages[i].PackageName})\n");
+                                            }
+                                            else
+                                            {
+                                                Program.WriteLine($"Stock ({stockName}) is not presented in filtered list!", ConsoleColor.DarkYellow);
                                             }
                                         }
                                     }
-
-                                    if (!shouldSkip(requiredPackages))
-                                    {
-                                        filteredPackages.Add(requiredPackages);
-                                        Program.appendLog($"Feature Package ({requiredPackages}) added to filtered list\n");
-                                    }
                                 }
-                            }
-                        }
-                        else
-                        {
-                            // Ensure package removed from the list
-                            for (int i = 0; i < feature.FeaturePackages.Length; i++)
-                            {
-                                var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                                if (requiredPackages != null)
+
+                                if (!shouldSkip(requiredPackages))
                                 {
-                                    filteredPackages.Remove(requiredPackages);
+                                    filteredPackages.Add(requiredPackages);
+                                    Program.appendLog($"Feature Package ({requiredPackages}) added to filtered list\n");
                                 }
                             }
                         }
                     }
+                    else
+                    {
+                        // Ensure package removed from the list
+                        for (int i = 0; i < feature.FeaturePackages.Length; i++)
+                        {
+                            var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                            if (requiredPackages != null)
+                            {
+                                filteredPackages.Remove(requiredPackages);
+                            }
+                        }
+                    }
                 }
+            }
 
+            if (filteredPackages.Count > 0)
+            {
                 var testCabFile = filteredPackages.FirstOrDefault();
                 var certificateIssuer = "";
                 var certificateDate = "";
