@@ -1,4 +1,36 @@
-﻿using Microsoft.Win32;
+﻿/**************************************************************************
+ * 
+ *  Project Name:     Universal Updater
+ *  Description:      Console based unofficial updater for Windows Phone.
+ * 
+ *  Author:           Fadil Fadz
+ *  Created Date:     2021
+ *  
+ *  Contributors:     Bashar Astifan
+ * 
+ *  Copyright © 2021 - 2024 Fadil Fadz
+ * 
+ *  Permission is hereby granted, free of charge, to any person obtaining a copy 
+ *  of this software and associated documentation files (the "Software"), to deal 
+ *  in the Software without restriction, including without limitation the rights 
+ *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+ *  copies of the Software, and to permit persons to whom the Software is 
+ *  furnished to do so, subject to the following conditions:
+ * 
+ *  The above copyright notice and this permission notice shall be included in all 
+ *  copies or substantial portions of the Software.
+ * 
+ *  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+ *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+ *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+ *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+ *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+ *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+ *  SOFTWARE.
+ * 
+ **************************************************************************/
+
+using Microsoft.Win32;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -11,12 +43,8 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
-using static System.Net.Mime.MediaTypeNames;
-using static Universal_Updater.Program;
 
 namespace Universal_Updater
 {
@@ -38,6 +66,7 @@ namespace Universal_Updater
 
         // For testing only without device
         public static bool useConnectedDevice = true;
+        public static bool iutoolMode = false;
 
         public Program()
         {
@@ -186,7 +215,7 @@ namespace Universal_Updater
 
             if (!IsRunningAsAdministrator())
             {
-                Program.WriteLine("Please start the app as Administrator", ConsoleColor.Red);
+                WriteLine("Please start the app as Administrator", ConsoleColor.Red);
                 return;
             }
 
@@ -242,15 +271,17 @@ namespace Universal_Updater
             WriteLine("\n[UPDATE TARGET]: ", ConsoleColor.DarkGray);
             WriteLine("1. Device", ConsoleColor.Green);
             WriteLine("2. FFU", ConsoleColor.Blue);
+            WriteLine("3. IUTool", ConsoleColor.DarkGray);
             Write("Choice: ", ConsoleColor.Magenta);
             ConsoleKeyInfo updateTargetAction;
             do
             {
                 updateTargetAction = Console.ReadKey(true);
             }
-            while (!IsNumberKeyOrNumpad(updateTargetAction, new char[] { '1', '2' }));
+            while (!IsNumberKeyOrNumpad(updateTargetAction, new char[] { '1', '2', '3' }));
             Write(updateTargetAction.KeyChar.ToString() + "\n");
-            pushToFFU = updateTargetAction.KeyChar != '1';
+            pushToFFU = updateTargetAction.KeyChar == '2';
+            iutoolMode = updateTargetAction.KeyChar == '3';
 
             if (pushToFFU)
             {
@@ -263,14 +294,9 @@ namespace Universal_Updater
                 WriteLine("- Don't interrupt the process until you asked for", ConsoleColor.Gray);
                 WriteLine("- Cleanup system temp after this process", ConsoleColor.Gray);
 
-                FFUPath = null;
-                Program.Write("\nEnter FFU path: ", ConsoleColor.DarkYellow);
-                do
-                {
-                    FFUPath = Console.ReadLine().Trim('"');
-                }
-                while (FFUPath.Length == 0);
-                appendLog(FFUPath + "\n");
+                FFUPath = await GeneralPicker.ShowOpenFileDialogAsync("ffu");
+                Write("\nFFU path: ", ConsoleColor.DarkYellow);
+                WriteLine(FFUPath + "\n");
                 if (FFUPath == null || FFUPath.Length == 0 || !File.Exists(FFUPath))
                 {
                     if (PushPackages.showRetryQuestion("FFU path is not valid or not exist", "Exit", ConsoleColor.Red))
@@ -285,6 +311,66 @@ namespace Universal_Updater
                 }
 
                 GetDeviceInfo.OfflineFFU();
+                useConnectedDevice = false;
+            }
+            else if (iutoolMode)
+            {
+                // Ask for CSV
+                WriteLine("\n[IMPORTANT]", ConsoleColor.Red);
+                WriteLine("- You need to filter cabs correctly", ConsoleColor.DarkYellow);
+                WriteLine("- Use `Choose InstalledPackages.csv`", ConsoleColor.Gray);
+                WriteLine("- Or skip if you have cabs filtered", ConsoleColor.Gray);
+
+                WriteLine("");
+                WriteLine("[FILTER FILE]", ConsoleColor.DarkGray);
+                WriteLine("1. Choose `InstalledPackages.csv`", ConsoleColor.Green);
+                WriteLine("2. Skip", ConsoleColor.Blue);
+                Write("Choice: ", ConsoleColor.Magenta);
+                ConsoleKeyInfo csvTargetAction;
+                do
+                {
+                    csvTargetAction = Console.ReadKey(true);
+                }
+                while (!IsNumberKeyOrNumpad(csvTargetAction, new char[] { '1', '2' }));
+                Write(csvTargetAction.KeyChar.ToString() + "\n");
+
+                if (csvTargetAction.KeyChar == '1')
+                {
+                chooseCSVArea:
+                    var csvFilePath = await GeneralPicker.ShowOpenFileDialogAsync("csv");
+                    if (string.IsNullOrEmpty(csvFilePath))
+                    {
+                        WriteLine("\nFile path is not valid!", ConsoleColor.Red);
+                        WriteLine("1. Retry");
+                        WriteLine("2. Skip");
+                        Write("Choice: ", ConsoleColor.Magenta);
+                        ConsoleKeyInfo csvRetryAction;
+                        do
+                        {
+                            csvRetryAction = Console.ReadKey(true);
+                        }
+                        while (!IsNumberKeyOrNumpad(csvRetryAction, new char[] { '1', '2' }));
+                        Console.Write(csvRetryAction.KeyChar.ToString() + "\n");
+                        if (csvRetryAction.KeyChar == '1')
+                        {
+                            WriteLine("");
+                            goto chooseCSVArea;
+                        }
+                    }
+                    else
+                    {
+                        Write("\nCSV file: ", ConsoleColor.DarkYellow);
+                        WriteLine($"{csvFilePath}\n");
+                        DownloadPackages.installedPackages = File.ReadAllLines(csvFilePath);
+                    }
+
+                }
+                else
+                {
+                    WriteLine("User skipped `InstalledPackages.csv`\nAll packages will be pushed by default", ConsoleColor.DarkYellow);
+                }
+
+                GetDeviceInfo.OfflineIUTool();
                 useConnectedDevice = false;
             }
 
@@ -339,7 +425,7 @@ namespace Universal_Updater
                 {
                     WriteLine(info);
                 }
-                DownloadPackages.installedPackages = File.ReadAllLines(Program.tempDirectory + @"\InstalledPackages.csv");
+                DownloadPackages.installedPackages = File.ReadAllLines(tempDirectory + @"\InstalledPackages.csv");
 
                 var availableUpdates = CheckForUpdates.AvailableUpdates();
                 if (CheckForUpdates.Choice == 1)
@@ -410,7 +496,7 @@ namespace Universal_Updater
                 }
                 Write(selectedUpdate.KeyChar + "\n");
 
-                selectedUpdateOption = Program.selectedUpdate.KeyChar.ToString();
+                selectedUpdateOption = selectedUpdate.KeyChar.ToString();
             }
             else
             {
@@ -421,15 +507,34 @@ namespace Universal_Updater
             if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdateOption) - 1] == "Offline")
             {
             packagePathArea:
-                packagePath = "";
-                Write("\nEnter Offline packages path: ", ConsoleColor.DarkYellow);
-                do
+                packagePath = await GeneralPicker.ShowSelectFolderDialogAsync();
+                if (string.IsNullOrEmpty(packagePath))
                 {
-                    packagePath = Console.ReadLine().Trim('"');
+                    WriteLine("\nFolder path is not valid!", ConsoleColor.Red);
+                    WriteLine("1. Retry");
+                    WriteLine("2. Exit");
+                    Write("Choice: ", ConsoleColor.Magenta);
+                    ConsoleKeyInfo csvRetryAction;
+                    do
+                    {
+                        csvRetryAction = Console.ReadKey(true);
+                    }
+                    while (!IsNumberKeyOrNumpad(csvRetryAction, new char[] { '1', '2' }));
+                    Console.Write(csvRetryAction.KeyChar.ToString() + "\n");
+                    if (csvRetryAction.KeyChar == '1')
+                    {
+                        WriteLine("");
+                        goto packagePathArea;
+                    }
+                    else
+                    {
+                        printLogLocation();
+                        return;
+                    }
                 }
-                while (packagePath.Length == 0);
-                appendLog($"{packagePath}\n");
 
+                Write("\nOffline packages: ", ConsoleColor.DarkYellow);
+                WriteLine($"{packagePath}\n");
                 string[] folderFiles = new string[] { };
                 if (Directory.Exists(packagePath))
                 {
@@ -494,13 +599,13 @@ namespace Universal_Updater
             }
             else
             {
-                bool IsFeatureInstalled = DownloadPackages.OnlineUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1]);
+                bool IsFeatureInstalled = DownloadPackages.OnlineUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1]);
                 if (IsFeatureInstalled == false)
                 {
-                    if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13016.108" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13037.0")
+                    if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13016.108" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13037.0")
                     {
                         WriteLine("\nAVAILABLE FEATURES", ConsoleColor.DarkGray);
-                        if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066")
+                        if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066")
                         {
                             printRCSMessage();
                         }
@@ -524,7 +629,7 @@ namespace Universal_Updater
                 }
 
                 ConsoleStyle("\nDOWNLOADING PACKAGES", 1, ConsoleColor.DarkGray);
-                packagesReady = await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1]);
+                packagesReady = await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1]);
             }
 
             string messageBoxText = "";
@@ -591,7 +696,37 @@ namespace Universal_Updater
         static void printLogLocation()
         {
             var previewLogFile = logFile.Replace($@"{Environment.CurrentDirectory}\", "");
-            WriteLine($"\nFinished.\n\nFor more details check the logs\n{previewLogFile}", ConsoleColor.DarkGray);
+            WriteLine($"\nFinished.\n\nFor more details check the logs\n{previewLogFile}\n", ConsoleColor.DarkGray);
+
+            // Run this as task to avoid blocking the final dialog
+            Task.Run(() =>
+            {
+                WriteLine("\nDo you want to restart Universal Updater?", ConsoleColor.Blue);
+                WriteLine("1. Yes");
+                WriteLine("2. Exit");
+                Write("Choice: ", ConsoleColor.Magenta);
+                ConsoleKeyInfo packagesAction;
+                do
+                {
+                    packagesAction = Console.ReadKey(true);
+                }
+                while (!IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
+                Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                if (packagesAction.KeyChar == '1')
+                {
+                    RestartApplication();
+                }
+                else
+                {
+                    Environment.Exit(0);
+                }
+            });
+        }
+        static void RestartApplication()
+        {
+            var exePath = Process.GetCurrentProcess().MainModule.FileName;
+            Process.Start(exePath);
+            Environment.Exit(0);
         }
 
         public static List<FeaturesItem> GlobalFeaturesList = new List<FeaturesItem>();

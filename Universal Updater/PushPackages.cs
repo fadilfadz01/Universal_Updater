@@ -1,26 +1,49 @@
-﻿using Newtonsoft.Json;
+﻿/**************************************************************************
+ * 
+ *  Project Name:     Universal Updater
+ *  Description:      Console based unofficial updater for Windows Phone.
+ * 
+ *  Author:           Fadil Fadz
+ *  Created Date:     2021
+ *  
+ *  Contributors:     Bashar Astifan
+ * 
+ *  Copyright © 2021 - 2024 Fadil Fadz
+ * 
+ *  Permission is hereby granted, free of charge, to any person obtaining a copy 
+ *  of this software and associated documentation files (the "Software"), to deal 
+ *  in the Software without restriction, including without limitation the rights 
+ *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+ *  copies of the Software, and to permit persons to whom the Software is 
+ *  furnished to do so, subject to the following conditions:
+ * 
+ *  The above copyright notice and this permission notice shall be included in all 
+ *  copies or substantial portions of the Software.
+ * 
+ *  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+ *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+ *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+ *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+ *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+ *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+ *  SOFTWARE.
+ * 
+ **************************************************************************/
+
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Management;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
-using System.Runtime.Remoting.Messaging;
-using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
-using static System.Net.Mime.MediaTypeNames;
 
 namespace Universal_Updater
 {
     class PushPackages
     {
         public static Process updateProcess;
-        public static int suggestedTimeOut = 10000;
+        public static int suggestedTimeOut = 6000;
         public static bool useOldTools = false;
         public static async Task StartUpdate()
         {
@@ -83,7 +106,7 @@ namespace Universal_Updater
                     // Ask for save location and dismount
                     saveFFUArea:
                         string saveLocation = null;
-                        saveLocation = await ShowSaveFileDialogAsync();
+                        saveLocation = await GeneralPicker.ShowSaveFileDialogAsync("ffu");
                         if (string.IsNullOrEmpty(saveLocation))
                         {
                             if (showRetryQuestion("Save location is not valid!, retry?"))
@@ -131,7 +154,7 @@ namespace Universal_Updater
             string saveLocation = null;
             if (dismountAction.KeyChar == '1')
             {
-                saveLocation = await ShowSaveFileDialogAsync();
+                saveLocation = await GeneralPicker.ShowSaveFileDialogAsync("ffu");
             }
 
             if (dismountAction.KeyChar != '3')
@@ -826,37 +849,6 @@ namespace Universal_Updater
             int endIndex = output.IndexOf(Environment.NewLine, startIndex);
 
             return output.Substring(startIndex, endIndex - startIndex).Trim();
-        }
-
-        public static Task<string> ShowSaveFileDialogAsync()
-        {
-            var taskCompletionSource = new TaskCompletionSource<string>();
-
-            // start STA thread for showing the SaveFileDialog
-            Thread staThread = new Thread(() =>
-            {
-                using (var saveFileDialog = new SaveFileDialog())
-                {
-                    saveFileDialog.Title = "Save FFU File";
-                    saveFileDialog.Filter = "FFU Files (*.ffu)|*.ffu";
-                    saveFileDialog.DefaultExt = "ffu";
-                    saveFileDialog.AddExtension = true;
-
-                    if (saveFileDialog.ShowDialog() == DialogResult.OK)
-                    {
-                        taskCompletionSource.SetResult(saveFileDialog.FileName);
-                    }
-                    else
-                    {
-                        taskCompletionSource.SetResult(null);
-                    }
-                }
-            });
-
-            staThread.SetApartmentState(ApartmentState.STA);
-            staThread.Start();
-
-            return taskCompletionSource.Task;
         }
 
         public static bool IsDriveMounted(string physicalDrive)

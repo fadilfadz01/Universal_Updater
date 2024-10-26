@@ -70,6 +70,7 @@
     <Compile Include="CabExtractor.cs" />
     <Compile Include="CheckForUpdates.cs" />
     <Compile Include="DownloadPackages.cs" />
+    <Compile Include="FolderPicker.cs" />
     <Compile Include="GetDeviceInfo.cs" />
     <Compile Include="OutputCapture.cs" />
     <Compile Include="Program.cs" />

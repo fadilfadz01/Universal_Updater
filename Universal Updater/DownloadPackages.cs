@@ -1,11 +1,42 @@
-﻿using System;
+﻿/**************************************************************************
+ * 
+ *  Project Name:     Universal Updater
+ *  Description:      Console based unofficial updater for Windows Phone.
+ * 
+ *  Author:           Fadil Fadz
+ *  Created Date:     2021
+ *  
+ *  Contributors:     Bashar Astifan
+ * 
+ *  Copyright © 2021 - 2024 Fadil Fadz
+ * 
+ *  Permission is hereby granted, free of charge, to any person obtaining a copy 
+ *  of this software and associated documentation files (the "Software"), to deal 
+ *  in the Software without restriction, including without limitation the rights 
+ *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell 
+ *  copies of the Software, and to permit persons to whom the Software is 
+ *  furnished to do so, subject to the following conditions:
+ * 
+ *  The above copyright notice and this permission notice shall be included in all 
+ *  copies or substantial portions of the Software.
+ * 
+ *  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
+ *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+ *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
+ *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+ *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
+ *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+ *  SOFTWARE.
+ * 
+ **************************************************************************/
+
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.NetworkInformation;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -16,7 +47,7 @@ namespace Universal_Updater
     class DownloadPackages
     {
         static Tuple<DateTime, long, long> DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.MinValue, 0, 0);
-        public static string[] installedPackages = new string[] { "Dummy" };
+        public static string[] installedPackages = new string[] { };
         static List<string> filteredPackages = new List<string>();
         static bool isFeatureInstalled = false;
         static bool filterCBSPackagesOnly = false;
@@ -132,10 +163,11 @@ namespace Universal_Updater
                 filterCBSPackagesOnly = folderHasCBS;
             }
 
-
-
             ConsoleKeyInfo packagesFilterAction = default(ConsoleKeyInfo);
-            if (!Program.updateRules.ForceFilterMode && !Program.updateRules.ForcePushAllMode)
+            // For FFU only we skip checking installedPackages length,
+            // because we mount FFU later which is intentionally made after all questions
+            var showFilterOptions = (installedPackages.Length > 0 || Program.pushToFFU);
+            if (!Program.updateRules.ForceFilterMode && !Program.updateRules.ForcePushAllMode && showFilterOptions)
             {
                 // Allow user to push all package if he want
                 Program.WriteLine("\nFilter packages options: ", ConsoleColor.Blue);
@@ -202,8 +234,13 @@ namespace Universal_Updater
                 Program.Write("\nPUSH MODE: ", ConsoleColor.Gray);
                 Program.WriteLine((PushPackages.useOldTools ? "FFU (SPKG)" : "FFU (CBS)"), (PushPackages.useOldTools ? ConsoleColor.DarkYellow : ConsoleColor.Blue));
             }
+            else if (Program.iutoolMode)
+            {
+                Program.Write("\nPUSH MODE: ", ConsoleColor.Gray);
+                Program.WriteLine("IUTOOL", ConsoleColor.DarkGray);
+            }
 
-            if (Program.updateRules.ForceFilterMode || packagesFilterAction.KeyChar == '1')
+            if ((Program.updateRules.ForceFilterMode || packagesFilterAction.KeyChar == '1') && installedPackages.Length > 0)
             {
                 Program.WriteLine($"\nFiltering packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
                 Program.appendLog("\n[INSTALLED PACKAGES]\n");
