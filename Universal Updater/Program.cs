@@ -816,6 +816,7 @@ namespace Universal_Updater
                     {
                         WriteLine("", ConsoleColor.Gray, false, false);
                     }
+
                     while (true)
                     {
                         int newRow = Math.Max(Console.CursorTop - (filteredFeatures.Count + 1), 0);
@@ -826,8 +827,12 @@ namespace Universal_Updater
                         {
                             if (filteredFeatures[i].ShouldPresent)
                             {
-                                string checkbox = filteredFeatures[i].State ? "[+]" : "[-]";
-                                Write($"{i + 1}. {checkbox} {filteredFeatures[i].Name}", filteredFeatures[i].State ? ConsoleColor.Green : ConsoleColor.Red, false, false);
+                                string checkbox = filteredFeatures[i].State ? "[ON]" : "[  ]";
+                                ConsoleColor color = filteredFeatures[i].State ? ConsoleColor.Green : ConsoleColor.Red;
+                                Write($"{i + 1}. ", color, false, false);
+                                //Write($"{i + 1}. {checkbox} {filteredFeatures[i].Name}", filteredFeatures[i].State ? ConsoleColor.Green : ConsoleColor.Red, false, false);
+                                Write($"{checkbox} ", color, false, false);
+                                Write($"{filteredFeatures[i].Name}", color, false, false);
                                 WriteLine($" {filteredFeatures[i].Description}", filteredFeatures[i].DescriptionColor, false, false);
                             }
                             else
