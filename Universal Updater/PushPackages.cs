@@ -352,6 +352,7 @@ namespace Universal_Updater
             if (!string.IsNullOrEmpty(outputFFU))
             {
                 Program.WriteLine($"\nFFU should be saved to:\n{outputFFU}", ConsoleColor.Blue);
+                Program.printFlashInstructions();
             }
             return true;
         }
