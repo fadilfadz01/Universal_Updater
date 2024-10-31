@@ -184,6 +184,17 @@ namespace Universal_Updater
             return logFile;
         }
 
+        public static void printFlashInstructions()
+        {
+            WriteLine("\n[FLASH INSTRUCTIONS]", ConsoleColor.Green);
+            Write("1. ", ConsoleColor.Gray);
+            Write("thor2.exe ", ConsoleColor.Blue);
+            Write("-mode uefiflash ", ConsoleColor.Gray);
+            WriteLine("-ffufile <FFU_Path>", ConsoleColor.DarkYellow);
+            Write("2. ", ConsoleColor.Gray);
+            Write("wpinternals.exe ", ConsoleColor.Blue);
+            WriteLine("-enabletestsigning", ConsoleColor.Green);
+        }
         static async void StartUpdater()
         {
             appendAppInfoToLog();
@@ -293,6 +304,8 @@ namespace Universal_Updater
                 WriteLine("- No FFUs mounted before, check Computer Management", ConsoleColor.Gray);
                 WriteLine("- Don't interrupt the process until you asked for", ConsoleColor.Gray);
                 WriteLine("- Cleanup system temp after this process", ConsoleColor.Gray);
+
+                printFlashInstructions();
 
                 FFUPath = await GeneralPicker.ShowOpenFileDialogAsync("ffu");
                 Write("\nFFU path: ", ConsoleColor.DarkYellow);

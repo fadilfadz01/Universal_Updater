@@ -44,7 +44,7 @@ namespace Universal_Updater
         {
             var capsPreview = fileExt.ToUpper();
             MessageBox.Show(
-            $"Please the ({capsPreview}) save location.",
+            $"Please select the ({capsPreview}) save location.",
             $"Save {capsPreview}",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
