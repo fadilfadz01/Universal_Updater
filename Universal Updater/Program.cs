@@ -946,12 +946,16 @@ namespace Universal_Updater
 
             logFile = prepareLogFile("universal_updater.exe");
 
-            if (!IsDependenciesInstalled("Microsoft Visual C++ 2012 Redistributable (x86)"))
+            if ((!IsDependenciesInstalled("Microsoft Visual C++ 2012 Redistributable (x86)")) &&
+                ((!IsDependenciesInstalled("Microsoft Visual C++ 2012 x86 Minimum Runtime")) ||
+                 (!IsDependenciesInstalled("Microsoft Visual C++ 2012 x86 Additional Runtime"))))
             {
                 WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2012.Redistributable.(x86)'", ConsoleColor.Red);
                 allowToRun = false;
             }
-            else if (!IsDependenciesInstalled("Microsoft Visual C++ 2013 Redistributable (x86)"))
+            else if ((!IsDependenciesInstalled("Microsoft Visual C++ 2013 Redistributable (x86)"))
+                     ((!IsDependenciesInstalled("Microsoft Visual C++ 2013 x86 Minimum Runtime")) ||
+                      (!IsDependenciesInstalled("Microsoft Visual C++ 2013 x86 Additional Runtime"))))
             {
                 WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2013.Redistributable.(x86)'", ConsoleColor.Red);
                 allowToRun = false;
