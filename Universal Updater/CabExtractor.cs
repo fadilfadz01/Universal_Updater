@@ -239,14 +239,34 @@ public class CabExtractor : IDisposable
         _fdiCloseStreamHandler = InputFileClose;
         _fdiSeekStreamHandler = FileSeek;
 
-        FdiContext = FdiCreate(_fdiAllocMemHandler, _fdiFreeMemHandler, _fdiOpenStreamHandler, _fdiReadStreamHandler, _fdiWriteStreamHandler, _fdiCloseStreamHandler, _fdiSeekStreamHandler, _erf);
-        _currentFileToDecompress = new ArchiveFile { Name = fileName };
-        FdiCopy();
-        if (_currentFileToDecompress.Data != null)
+        try
         {
-            File.WriteAllBytes(savePath, _currentFileToDecompress.Data);
+            FdiContext = FdiCreate(_fdiAllocMemHandler, _fdiFreeMemHandler, _fdiOpenStreamHandler, _fdiReadStreamHandler, _fdiWriteStreamHandler, _fdiCloseStreamHandler, _fdiSeekStreamHandler, _erf);
+            _currentFileToDecompress = new ArchiveFile { Name = fileName };
+            FdiCopy();
+            if (!_currentFileToDecompress.Found)
+            {
+                throw new FileNotFoundException($"File '{fileName}' not found in cabinet '{filePath}'.", fileName);
+            }
+            if (_currentFileToDecompress.Data != null)
+            {
+                File.WriteAllBytes(savePath, _currentFileToDecompress.Data);
+            }
+            else
+            {
+                File.WriteAllBytes(savePath, new byte[0]);
+            }
         }
-
+        finally
+        {
+            if (FdiContext != IntPtr.Zero)
+            {
+                NativeMethods.FdiDestroy(FdiContext);
+                FdiContext = IntPtr.Zero;
+            }
+            _currentFileToDecompress = null;
+            _inputData = null;
+        }
     }
 
     private void CreateAllRelevantDirectories(string filePath)
@@ -342,7 +362,7 @@ public class CabExtractor : IDisposable
     private static IntPtr CopyFiles(NativeMethods.FdiNotification fdin)
     {
         var fileName = GetFileName(fdin);
-        var extractFile = _currentFileToDecompress.Name == fileName ? _currentFileToDecompress : null;
+        var extractFile = string.Equals(_currentFileToDecompress.Name, fileName, StringComparison.OrdinalIgnoreCase) ? _currentFileToDecompress : null;
         if (extractFile != null)
         {
             var stream = new MemoryStream();
@@ -428,6 +448,7 @@ public class CabExtractor : IDisposable
         }
 
         stream.Close();
+        ((GCHandle)fdin.hf).Free();
         return IntPtr.Zero;
     }
 

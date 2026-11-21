@@ -38,6 +38,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -63,48 +64,61 @@ namespace Universal_Updater
         public static string filteredDirectory = $@"{Environment.CurrentDirectory}\Filtered";
         public static string logFile = $@"{Environment.CurrentDirectory}\Logs\universal_updater.txt";
         public static UpdateRules updateRules = new UpdateRules();
+        private static readonly object logLock = new object();
 
         // For testing only without device
         public static bool useConnectedDevice = true;
         public static bool iutoolMode = false;
 
-        public Program()
-        {
-            while (true)
-            {
-                Thread.Sleep(100);
-            }
-        }
-
         public static void appendLog(string text)
         {
-            try
+            if (string.IsNullOrEmpty(text))
+                return;
+
+            lock (logLock)
             {
-                using (var stream = new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                try
                 {
-                    using (var writer = new StreamWriter(stream))
+                    var logDir = Path.GetDirectoryName(logFile);
+                    if (!string.IsNullOrEmpty(logDir) && !Directory.Exists(logDir))
                     {
-                        writer.Write(text);
+                        Directory.CreateDirectory(logDir);
+                    }
+                    using (var stream = new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                    {
+                        using (var writer = new StreamWriter(stream))
+                        {
+                            writer.Write(text);
+                        }
                     }
                 }
-            }
-            catch (Exception e)
-            {
-
+                catch
+                {
+                }
             }
         }
         public static void WriteLine(string text, ConsoleColor color = ConsoleColor.White, bool trimPreviewIfLong = false, bool appendToLog = true)
         {
-            Console.ForegroundColor = color;
-            if (trimPreviewIfLong)
+            text = text ?? string.Empty;
+            lock (logLock)
             {
-                WriteTrimmedLine(text);
+                if (!Console.IsOutputRedirected)
+                {
+                    try { Console.ForegroundColor = color; } catch { }
+                }
+                if (trimPreviewIfLong)
+                {
+                    WriteTrimmedLine(text);
+                }
+                else
+                {
+                    Console.WriteLine(text);
+                }
+                if (!Console.IsOutputRedirected)
+                {
+                    try { Console.ResetColor(); } catch { }
+                }
             }
-            else
-            {
-                Console.WriteLine(text);
-            }
-            Console.ResetColor();
             if (appendToLog)
             {
                 appendLog(text + Environment.NewLine);
@@ -112,16 +126,26 @@ namespace Universal_Updater
         }
         public static void Write(string text, ConsoleColor color = ConsoleColor.White, bool trimPreviewIfLong = false, bool appendToLog = true)
         {
-            Console.ForegroundColor = color;
-            if (trimPreviewIfLong)
+            text = text ?? string.Empty;
+            lock (logLock)
             {
-                WriteTrimmedLine(text, false);
+                if (!Console.IsOutputRedirected)
+                {
+                    try { Console.ForegroundColor = color; } catch { }
+                }
+                if (trimPreviewIfLong)
+                {
+                    WriteTrimmedLine(text, false);
+                }
+                else
+                {
+                    Console.Write(text);
+                }
+                if (!Console.IsOutputRedirected)
+                {
+                    try { Console.ResetColor(); } catch { }
+                }
             }
-            else
-            {
-                Console.Write(text);
-            }
-            Console.ResetColor();
             if (appendToLog)
             {
                 appendLog(text);
@@ -129,14 +153,21 @@ namespace Universal_Updater
         }
         public static void WriteTrimmedLine(string text, bool writeLine = true)
         {
+            text = text ?? string.Empty;
+            int windowWidth = 115;
+            if (!Console.IsOutputRedirected)
+            {
+                try { windowWidth = Console.WindowWidth; } catch { }
+            }
+
             // Get the current console window width
-            int consoleWidth = (int)Math.Round(Console.WindowWidth * 0.95);
+            int consoleWidth = Math.Max(20, (int)Math.Round(windowWidth * 0.95));
 
             // Calculate the maximum allowed length considering space for '...'
             const int ellipsisLength = 3;
             int maxAllowedLength = consoleWidth - ellipsisLength;
 
-            if (text.Length > maxAllowedLength)
+            if (maxAllowedLength > 0 && text.Length > maxAllowedLength)
             {
                 // If text is too long, trim and add ellipses
                 text = text.Substring(0, maxAllowedLength) + "...";
@@ -154,17 +185,24 @@ namespace Universal_Updater
 
         public static void resetCursorPosition()
         {
-            if (Console.CursorTop > 0)
-                Console.SetCursorPosition(0, Console.CursorTop - 1);
-            else
-                Console.SetCursorPosition(0, 0);
+            if (Console.IsOutputRedirected)
+                return;
 
-            Console.Write(new string(' ', Console.WindowWidth));
-            Console.SetCursorPosition(0, Console.CursorTop - 1);
+            try
+            {
+                int targetTop = Math.Max(0, Console.CursorTop - 1);
+                Console.SetCursorPosition(0, targetTop);
+                int clearWidth = Math.Max(1, Console.WindowWidth - 1);
+                Console.Write(new string(' ', clearWidth));
+                Console.SetCursorPosition(0, targetTop);
+            }
+            catch
+            {
+            }
         }
         static async Task retryWithCount(int count = 3)
         {
-            for (int i = 3; i > 0; i--)
+            for (int i = count; i > 0; i--)
             {
                 ConsoleStyle($"Will retry after {i} seconds . . .", 0);
                 await Task.Delay(1000);
@@ -187,175 +225,735 @@ namespace Universal_Updater
         public static void printFlashInstructions()
         {
             WriteLine("\n[FLASH INSTRUCTIONS]", ConsoleColor.Green);
-            Write("1. ", ConsoleColor.Gray);
+            WriteLine("Bootloader Spec A (Unlocked):", ConsoleColor.DarkGray);
+            Write("  1. ", ConsoleColor.Gray);
             Write("thor2.exe ", ConsoleColor.Blue);
             Write("-mode uefiflash ", ConsoleColor.Gray);
             WriteLine("-ffufile <FFU_Path>", ConsoleColor.DarkYellow);
-            Write("2. ", ConsoleColor.Gray);
+            Write("  2. ", ConsoleColor.Gray);
             Write("wpinternals.exe ", ConsoleColor.Blue);
             WriteLine("-enabletestsigning", ConsoleColor.Green);
+            WriteLine("Bootloader Spec B / Unsigned (-noSign) FFU:", ConsoleColor.DarkGray);
+            Write("  - ", ConsoleColor.Gray);
+            WriteLine("Use WPinternals -> Flash -> Flash Custom ROM (or dump & flash partitions separately)", ConsoleColor.DarkYellow);
         }
-        static async void StartUpdater()
+
+        static string GetHostSysX86WimgapiPath()
         {
-            appendAppInfoToLog();
-            ConsoleStyle("", 0, ConsoleColor.Blue);
-
-            // Load rules / configs
-            LoadUpdateRules();
-
-            // Extract important tools if not ready
-            string startPath = AppDomain.CurrentDomain.BaseDirectory;
-            string zipPath = Path.Combine(startPath, @"Resources\i386.zip");
-            string extractPath = Path.Combine(startPath, @"Resources");
-            string hashFilePath = Path.Combine(startPath, @"Resources\hash.txt");
-
-            // Calculate current hash
-            string currentHash = CalculateMD5(zipPath);
-
-            // Read previous hash from file
-            string previousHash = File.Exists(hashFilePath) ? File.ReadAllText(hashFilePath).Trim() : null;
-            if (currentHash != previousHash)
+            string systemX86 = Environment.GetFolderPath(Environment.SpecialFolder.SystemX86);
+            if (!string.IsNullOrEmpty(systemX86))
             {
-                // Tools zip changed and better to re-extract
-                if (Directory.Exists(extractPath + "\\i386"))
+                string candidate = Path.Combine(systemX86, "wimgapi.dll");
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+
+            string winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            string fallback = Path.Combine(winDir, Environment.Is64BitOperatingSystem ? "SysWOW64" : "System32", "wimgapi.dll");
+            return File.Exists(fallback) ? fallback : null;
+        }
+
+        static Version ParseFileVersion(string filePath)
+        {
+            try
+            {
+                if (!File.Exists(filePath))
+                    return null;
+                var info = FileVersionInfo.GetVersionInfo(filePath);
+                return new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        static bool IsPeX86Dll(string filePath)
+        {
+            try
+            {
+                using (var fs = File.OpenRead(filePath))
+                using (var br = new BinaryReader(fs))
                 {
-                    Directory.Delete(extractPath + "\\i386", true);
+                    if (fs.Length < 0x40 || br.ReadUInt16() != 0x5A4D) // MZ
+                        return false;
+                    fs.Seek(0x3C, SeekOrigin.Begin);
+                    int peOffset = br.ReadInt32();
+                    if (peOffset <= 0 || peOffset + 6 > fs.Length)
+                        return false;
+                    fs.Seek(peOffset, SeekOrigin.Begin);
+                    if (br.ReadUInt32() != 0x00004550) // PE\0\0
+                        return false;
+                    ushort machine = br.ReadUInt16();
+                    return machine == 0x014C; // IMAGE_FILE_MACHINE_I386
                 }
-                File.WriteAllText(hashFilePath, currentHash);
             }
-
-            if (!IsRunningAsAdministrator())
+            catch
             {
-                WriteLine("Please start the app as Administrator", ConsoleColor.Red);
-                return;
+                return false;
             }
+        }
 
-            // Check if directory already extracted
-            if (!Directory.Exists(extractPath + "\\i386"))
+        internal static void EnsureCompatibleWimgapi(string resourcesPath)
+        {
+            try
             {
-                ConsoleStyle("Extracting resources, please wait...", 0, ConsoleColor.Blue);
-                // Extract the archive
-                ZipFile.ExtractToDirectory(zipPath, extractPath);
-            }
+                string hostWimgapi = GetHostSysX86WimgapiPath();
+                if (string.IsNullOrEmpty(hostWimgapi) || !IsPeX86Dll(hostWimgapi))
+                    return;
 
-            Console.ResetColor();
-        cleanTempArea:
-            if (Directory.Exists(tempDirectory))
-            {
-                try
+                Version hostVersion = ParseFileVersion(hostWimgapi);
+                if (hostVersion == null)
+                    return;
+
+                string[] targets = new[]
                 {
-                    Directory.Delete(tempDirectory, true);
-                }
-                catch (Exception ex)
+                    Path.Combine(resourcesPath, "i386", "wimgapi.dll"),
+                    Path.Combine(resourcesPath, "i386", "_old_", "wimgapi.dll")
+                };
+
+                foreach (var targetPath in targets)
                 {
-                    // Handle in use error 
-                    // Try with CMD first before showing error
-                    showTitleWaitMessage(true, "Cleaning temp");
-                    var deleteProcess = new Process();
-                    deleteProcess.StartInfo.FileName = toolsDirectory + $@"\cleanTemp.bat";
-                    deleteProcess.StartInfo.Arguments = $"{tempDirectory} \"{logFile}\"";
-                    deleteProcess.StartInfo.UseShellExecute = false;
-                    deleteProcess.StartInfo.CreateNoWindow = true;
-                    deleteProcess.Start();
-                    deleteProcess.WaitForExit();
-                    showTitleWaitMessage(false);
-                    if (deleteProcess.HasExited && deleteProcess.ExitCode != 0)
+                    string parentDir = Path.GetDirectoryName(targetPath);
+                    if (string.IsNullOrEmpty(parentDir) || !Directory.Exists(parentDir))
+                        continue;
+
+                    Version targetVersion = ParseFileVersion(targetPath);
+                    if (targetVersion == null || hostVersion > targetVersion)
                     {
-                        ConsoleStyle(ex.Message, 0, ConsoleColor.Red);
-                        WriteLine("\nRetrying...", ConsoleColor.DarkYellow);
-                        await Task.Delay(5000);
-                        // Give small delay between retries
-                        await retryWithCount(3);
-                        goto cleanTempArea;
+                        File.Copy(hostWimgapi, targetPath, true);
+                        appendLog($"[WIMGAPI] Synced {targetPath} ({targetVersion?.ToString() ?? "missing"} -> {hostVersion})\n");
                     }
                 }
             }
-            Directory.CreateDirectory(tempDirectory);
-
-            // Expected errors simulate check (For testing only)
-            //PushPackages.isErrorExpected("Blabla 0x80070002", "updateapp.exe", "iutocbsfromupdateoutput");
-            //PushPackages.isErrorExpected("Blabla 0x80004001", "updateapp.exe", "iutocbsfromupdateoutput");
-            //PushPackages.isErrorExpected("Blabla 0x80070002", "updateapp.exe", "install .....");
-            //PushPackages.isErrorExpected("Blabla 0x80004001", "updateapp.exe", "install .....");
-
-            // Get update target
-            WriteLine("\n[UPDATE TARGET]: ", ConsoleColor.DarkGray);
-            WriteLine("1. Device", ConsoleColor.Green);
-            WriteLine("2. FFU", ConsoleColor.Blue);
-            WriteLine("3. IUTool", ConsoleColor.DarkGray);
-            Write("Choice: ", ConsoleColor.Magenta);
-            ConsoleKeyInfo updateTargetAction;
-            do
+            catch (Exception ex)
             {
-                updateTargetAction = Console.ReadKey(true);
+                appendLog($"[WIMGAPI] Failed to sync host wimgapi.dll: {ex.Message}\n");
             }
-            while (!IsNumberKeyOrNumpad(updateTargetAction, new char[] { '1', '2', '3' }));
-            Write(updateTargetAction.KeyChar.ToString() + "\n");
-            pushToFFU = updateTargetAction.KeyChar == '2';
-            iutoolMode = updateTargetAction.KeyChar == '3';
-
-            if (pushToFFU)
+        }
+        static async Task<bool> ReadConnectedDeviceInfoAsync(bool allowCancelOnError)
+        {
+            ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+            bool deviceInfoReady = false;
+            while (!deviceInfoReady)
             {
-            ffuPathArea:
-                // Ask for FFU
-                WriteLine("\n[NOTICE]", ConsoleColor.Red);
-                WriteLine("- After flashing FFU, phone will perform hard reset", ConsoleColor.DarkYellow);
-                WriteLine("- Ensure to have enough space at C: drive", ConsoleColor.Gray);
-                WriteLine("- No FFUs mounted before, check Computer Management", ConsoleColor.Gray);
-                WriteLine("- Don't interrupt the process until you asked for", ConsoleColor.Gray);
-                WriteLine("- Cleanup system temp after this process", ConsoleColor.Gray);
-
-                printFlashInstructions();
-
-                FFUPath = await GeneralPicker.ShowOpenFileDialogAsync("ffu");
-                Write("\nFFU path: ", ConsoleColor.DarkYellow);
-                WriteLine(FFUPath + "\n");
-                if (FFUPath == null || FFUPath.Length == 0 || !File.Exists(FFUPath))
+                ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+                var exitCode = GetDeviceInfo.GetLog();
+                deviceInfoReady = exitCode == 0;
+                await Task.Delay(1000);
+                if (!deviceInfoReady)
                 {
-                    if (PushPackages.showRetryQuestion("FFU path is not valid or not exist", "Exit", ConsoleColor.Red))
+                    if (exitCode == -1)
                     {
-                        goto ffuPathArea;
+                        ConsoleStyle("Read device info (Timeout), retrying . . .", 0, ConsoleColor.Red);
                     }
                     else
                     {
-                        printLogLocation();
+                        string formattedErrorCode = "0x" + exitCode.ToString("X");
+                        ConsoleStyle($"Cannot read device info ({formattedErrorCode}), retrying . . .", 0, ConsoleColor.Red);
+                        if (formattedErrorCode == "0x8000FFFF")
+                        {
+                            // Usually appear if device is not connected
+                            WriteLine("");
+                            WriteLine("Ensure the device is connected properly", ConsoleColor.Red);
+                        }
+                        // Give user more time to read and copy error
+                        await Task.Delay(3000);
+                    }
+
+                    if (allowCancelOnError)
+                    {
+                        if (!PushPackages.showRetryQuestion("Failed to read connected device info, retry?", "Cancel", ConsoleColor.DarkYellow))
+                        {
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        await Task.Delay(2000);
+                        // Give small delay between retries
+                        await retryWithCount(3);
+                    }
+                }
+            }
+
+            ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
+            string[] deviceInfo = null;
+            try
+            {
+                deviceInfo = await GetDeviceInfo.ReadInfo();
+            }
+            catch (Exception ex)
+            {
+                appendLog($"[ReadInfo] Exception: {ex}\n");
+            }
+
+            if (deviceInfo == null)
+            {
+                ConsoleStyle("Couldn't read the device information.\nMake sure that you have no pending updates on your phone settings.", 0, ConsoleColor.Red);
+                return false;
+            }
+
+            string installedCsv = Path.Combine(tempDirectory, "InstalledPackages.csv");
+            if (!File.Exists(installedCsv))
+            {
+                WriteLine("InstalledPackages.csv was not found in device logs.", ConsoleColor.Red);
+                return false;
+            }
+
+            ConsoleStyle("TARGET INFORMATIONS", 1, ConsoleColor.DarkGray);
+            foreach (string info in deviceInfo)
+            {
+                WriteLine(info);
+            }
+            DownloadPackages.installedPackages = File.ReadAllLines(installedCsv);
+            return true;
+        }
+
+        static async Task WaitForInternetAsync()
+        {
+            while (!IsInternetConnected())
+            {
+                ConsoleStyle("Waiting for internet to connect . . .", 1, ConsoleColor.DarkYellow);
+                await Task.Delay(2000);
+            }
+        }
+
+        static void PromptOnlineFeatureSelection(string targetBuild, bool isFeatureInstalled)
+        {
+            if (isFeatureInstalled)
+                return;
+
+            if (targetBuild == "14393.1066" || targetBuild == "13016.108" || targetBuild == "13037.0")
+            {
+                WriteLine("\nAVAILABLE FEATURES", ConsoleColor.DarkGray);
+                if (targetBuild == "14393.1066")
+                {
+                    printRCSMessage();
+                }
+                else
+                {
+                    printProjectAMessage();
+                }
+                do
+                {
+                    featureChoice = Console.ReadKey(true);
+                }
+                while (featureChoice.KeyChar != 'Y' && featureChoice.KeyChar != 'N' && featureChoice.KeyChar != 'y' && featureChoice.KeyChar != 'n');
+                Write(featureChoice.KeyChar.ToString().ToUpper() + "\n");
+
+                if ((featureChoice.KeyChar == 'Y' || featureChoice.KeyChar == 'y') &&
+                    (targetBuild == "13016.108" || targetBuild == "13037.0"))
+                {
+                    if (DownloadPackages.IncludeFeatureFromManifest(targetBuild, "ms_projecta.mainos"))
+                    {
+                        appendLog($"[FEATURE] Added ms_projecta.mainos for build {targetBuild}\n");
+                    }
+                }
+            }
+        }
+
+        static async Task HandleDownloadCabsMode()
+        {
+            useConnectedDevice = false;
+            pushToFFU = false;
+            iutoolMode = false;
+
+            var builds = new[]
+            {
+                Tuple.Create("10.0.10549.4   (13016.108)", "13016.108"),
+                Tuple.Create("10.0.10570.0   (13037.0)",   "13037.0"),
+                Tuple.Create("10.0.10586.107 (13080.107)", "13080.107"),
+                Tuple.Create("10.0.14393.1066 (AU)",       "14393.1066"),
+                Tuple.Create("10.0.15063.297  (CU)",       "15063.297"),
+                Tuple.Create("10.0.15254.603  (FCU)",      "15254.603")
+            };
+
+            WriteLine("\n[TARGET BUILD]:", ConsoleColor.DarkGray);
+            for (int i = 0; i < builds.Length; i++)
+            {
+                WriteLine($"{i + 1}. {builds[i].Item1}", ConsoleColor.Gray);
+            }
+            Write("Choice: ", ConsoleColor.Magenta);
+            ConsoleKeyInfo buildChoice;
+            do
+            {
+                buildChoice = Console.ReadKey(true);
+            }
+            while (!IsNumberKeyOrNumpad(buildChoice, new char[] { '1', '2', '3', '4', '5', '6' }));
+            char buildDigit = NormalizeNumberKey(buildChoice);
+            Write(buildDigit.ToString() + "\n");
+            int buildIdx = buildDigit - '1';
+            string targetBuild = builds[buildIdx].Item2;
+
+            WriteLine("\n[PACKAGE FILTER]:", ConsoleColor.DarkGray);
+            WriteLine("1. Connected Device", ConsoleColor.Green);
+            WriteLine("2. FFU Image", ConsoleColor.Blue);
+            WriteLine("3. InstalledPackages.csv", ConsoleColor.DarkYellow);
+            WriteLine("4. All packages in manifest", ConsoleColor.Gray);
+            Write("Choice: ", ConsoleColor.Magenta);
+            ConsoleKeyInfo filterChoice;
+            do
+            {
+                filterChoice = Console.ReadKey(true);
+            }
+            while (!IsNumberKeyOrNumpad(filterChoice, new char[] { '1', '2', '3', '4' }));
+            char filterDigit = NormalizeNumberKey(filterChoice);
+            Write(filterDigit.ToString() + "\n");
+
+            bool includeAll = false;
+            switch (filterDigit)
+            {
+                case '1':
+                    if (!await ReadConnectedDeviceInfoAsync(true))
+                    {
+                        WriteLine("\nOperation cancelled", ConsoleColor.Red);
                         return;
+                    }
+                    break;
+
+                case '2':
+                    while (true)
+                    {
+                        string selectedFfu = await GeneralPicker.ShowOpenFileDialogAsync("ffu");
+                        Write("\nFFU path: ", ConsoleColor.DarkYellow);
+                        WriteLine((selectedFfu ?? string.Empty) + "\n");
+                        if (string.IsNullOrEmpty(selectedFfu) || !File.Exists(selectedFfu))
+                        {
+                            if (!PushPackages.showRetryQuestion("FFU path is not valid or not exist", "Cancel", ConsoleColor.Red))
+                            {
+                                WriteLine("\nOperation cancelled", ConsoleColor.Red);
+                                return;
+                            }
+                            continue;
+                        }
+
+                        FFUEntry ffuMount = null;
+                        try
+                        {
+                            ffuMount = await PushPackages.mountFFU(selectedFfu);
+                            if (ffuMount == null)
+                            {
+                                if (!PushPackages.showRetryQuestion("Mount FFU failed!, retry?", "Cancel"))
+                                {
+                                    WriteLine("\nOperation cancelled", ConsoleColor.Red);
+                                    return;
+                                }
+                                continue;
+                            }
+
+                            var ffuPackages = await GetDeviceInfo.GetInstalledPackagesFromFFU(ffuMount);
+                            DownloadPackages.installedPackages = ffuPackages.ToArray();
+                            await GetDeviceInfo.printFFUDetails(ffuMount);
+                        }
+                        finally
+                        {
+                            if (ffuMount != null)
+                            {
+                                await PushPackages.dismountFFU(ffuMount, null);
+                            }
+                        }
+
+                        if (DownloadPackages.installedPackages.Length == 0)
+                        {
+                            if (!PushPackages.showRetryQuestion("Cannot read installed packages from FFU, retry?", "Cancel"))
+                            {
+                                WriteLine("\nOperation cancelled", ConsoleColor.Red);
+                                return;
+                            }
+                            continue;
+                        }
+                        break;
+                    }
+                    break;
+
+                case '3':
+                    while (true)
+                    {
+                        string csvPath = await GeneralPicker.ShowOpenFileDialogAsync("csv");
+                        if (string.IsNullOrEmpty(csvPath) || !File.Exists(csvPath))
+                        {
+                            if (!PushPackages.showRetryQuestion("CSV file path is not valid or not exist", "Cancel", ConsoleColor.Red))
+                            {
+                                WriteLine("\nOperation cancelled", ConsoleColor.Red);
+                                return;
+                            }
+                            continue;
+                        }
+                        Write("\nCSV file: ", ConsoleColor.DarkYellow);
+                        WriteLine($"{csvPath}\n");
+                        DownloadPackages.installedPackages = File.ReadAllLines(csvPath);
+                        break;
+                    }
+                    break;
+
+                case '4':
+                    includeAll = true;
+                    DownloadPackages.installedPackages = new string[0];
+                    break;
+            }
+
+            string destFolder = null;
+            while (true)
+            {
+                destFolder = await GeneralPicker.ShowSelectFolderDialogAsync("Please select destination folder for downloaded CAB files.");
+                if (string.IsNullOrEmpty(destFolder))
+                {
+                    if (!PushPackages.showRetryQuestion("Destination folder is not valid!, retry?", "Cancel", ConsoleColor.Red))
+                    {
+                        WriteLine("\nOperation cancelled", ConsoleColor.Red);
+                        return;
+                    }
+                    continue;
+                }
+                break;
+            }
+
+            Write("\nTarget build      : ", ConsoleColor.DarkGray);
+            WriteLine(targetBuild, ConsoleColor.Blue);
+            Write("Destination folder: ", ConsoleColor.DarkGray);
+            WriteLine(destFolder, ConsoleColor.DarkYellow);
+
+            bool isFeatureInstalled = DownloadPackages.OnlineUpdate(targetBuild, includeAll);
+            if (!includeAll)
+            {
+                PromptOnlineFeatureSelection(targetBuild, isFeatureInstalled);
+            }
+
+            Write("Matched packages  : ", ConsoleColor.DarkGray);
+            WriteLine(DownloadPackages.filteredPackages.Count.ToString(), ConsoleColor.Green);
+
+            if (DownloadPackages.filteredPackages.Count == 0)
+            {
+                WriteLine("\nNo matching packages found to download.", ConsoleColor.Red);
+                return;
+            }
+
+            WriteLine("\nDOWNLOADING PACKAGES", ConsoleColor.DarkGray);
+            await WaitForInternetAsync();
+
+            ConsoleStyle("\nDOWNLOADING PACKAGES", 1, ConsoleColor.DarkGray);
+            bool downloaded = await DownloadPackages.DownloadUpdate(targetBuild, destFolder);
+            if (downloaded)
+            {
+                WriteLine($"\nCAB files saved to:\n{destFolder}", ConsoleColor.Green);
+            }
+        }
+
+        static async Task StartUpdater()
+        {
+            try
+            {
+                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12 | SecurityProtocolType.Tls11;
+                appendAppInfoToLog();
+                ConsoleStyle("", 0, ConsoleColor.Blue);
+
+                // Load rules / configs
+                LoadUpdateRules();
+
+                if (!IsRunningAsAdministrator())
+                {
+                    WriteLine("Please start the app as Administrator", ConsoleColor.Red);
+                    await printLogLocation();
+                    return;
+                }
+
+                // Extract important tools if not ready
+                string startPath = AppDomain.CurrentDomain.BaseDirectory;
+                string zipPath = Path.Combine(startPath, @"Resources\i386.zip");
+                string extractPath = Path.Combine(startPath, @"Resources");
+                string i386Dir = Path.Combine(extractPath, "i386");
+                string hashFilePath = Path.Combine(startPath, @"Resources\hash.txt");
+
+                PushPackages.stopRunningApps("updateapp.exe");
+                PushPackages.stopRunningApps("wpimage.exe");
+                PushPackages.stopRunningApps("iutool.exe");
+
+                if (File.Exists(zipPath))
+                {
+                    string currentHash = CalculateMD5(zipPath);
+                    string previousHash = File.Exists(hashFilePath) ? File.ReadAllText(hashFilePath).Trim() : null;
+                    if (!string.Equals(currentHash, previousHash, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(i386Dir))
+                    {
+                        if (Directory.Exists(i386Dir))
+                        {
+                            Directory.Delete(i386Dir, true);
+                        }
+                        ConsoleStyle("Extracting resources, please wait...", 0, ConsoleColor.Blue);
+                        ZipFile.ExtractToDirectory(zipPath, extractPath);
+                        File.WriteAllText(hashFilePath, currentHash);
                     }
                 }
 
-                GetDeviceInfo.OfflineFFU();
-                useConnectedDevice = false;
-            }
-            else if (iutoolMode)
-            {
-                // Ask for CSV
-                WriteLine("\n[IMPORTANT]", ConsoleColor.Red);
-                WriteLine("- You need to filter cabs correctly", ConsoleColor.DarkYellow);
-                WriteLine("- Use `Choose InstalledPackages.csv`", ConsoleColor.Gray);
-                WriteLine("- Or skip if you have cabs filtered", ConsoleColor.Gray);
+                EnsureCompatibleWimgapi(extractPath);
+                if (!Console.IsOutputRedirected)
+                {
+                    try { Console.ResetColor(); } catch { }
+                }
 
-                WriteLine("");
-                WriteLine("[FILTER FILE]", ConsoleColor.DarkGray);
-                WriteLine("1. Choose `InstalledPackages.csv`", ConsoleColor.Green);
-                WriteLine("2. Skip", ConsoleColor.Blue);
+                await PushPackages.safeMountCheck();
+                await PushPackages.CleanupStaleWimMounts();
+
+                const int maxCleanAttempts = 3;
+                for (int cleanAttempt = 1; cleanAttempt <= maxCleanAttempts && Directory.Exists(tempDirectory); cleanAttempt++)
+                {
+                    try
+                    {
+                        Directory.Delete(tempDirectory, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        showTitleWaitMessage(true, "Cleaning temp");
+                        int batExitCode = -1;
+                        using (var deleteProcess = new Process())
+                        {
+                            deleteProcess.StartInfo.FileName = toolsDirectory + $@"\cleanTemp.bat";
+                            deleteProcess.StartInfo.Arguments = $"{tempDirectory} \"{logFile}\"";
+                            deleteProcess.StartInfo.UseShellExecute = false;
+                            deleteProcess.StartInfo.CreateNoWindow = true;
+                            deleteProcess.Start();
+                            deleteProcess.WaitForExit();
+                            batExitCode = deleteProcess.ExitCode;
+                        }
+                        showTitleWaitMessage(false);
+                        if (Directory.Exists(tempDirectory) && batExitCode != 0)
+                        {
+                            appendLog($"[CLEANUP] Temp delete attempt {cleanAttempt}/{maxCleanAttempts} failed: {ex.Message}\n");
+                            if (cleanAttempt < maxCleanAttempts)
+                            {
+                                ConsoleStyle(ex.Message, 0, ConsoleColor.Red);
+                                WriteLine($"\nRetrying ({cleanAttempt}/{maxCleanAttempts})...", ConsoleColor.DarkYellow);
+                                await Task.Delay(2000);
+                                await retryWithCount(3);
+                            }
+                            else
+                            {
+                                WriteLine($"\nWarning: Could not fully clean '{tempDirectory}' ({ex.Message}). Continuing...", ConsoleColor.DarkYellow);
+                            }
+                        }
+                    }
+                }
+                Directory.CreateDirectory(tempDirectory);
+
+                // Expected errors simulate check (For testing only)
+                //PushPackages.isErrorExpected("Blabla 0x80070002", "updateapp.exe", "iutocbsfromupdateoutput");
+                //PushPackages.isErrorExpected("Blabla 0x80004001", "updateapp.exe", "iutocbsfromupdateoutput");
+                //PushPackages.isErrorExpected("Blabla 0x80070002", "updateapp.exe", "install .....");
+                //PushPackages.isErrorExpected("Blabla 0x80004001", "updateapp.exe", "install .....");
+
+                // Get update target
+                WriteLine("\n[UPDATE TARGET]: ", ConsoleColor.DarkGray);
+                WriteLine("1. Device", ConsoleColor.Green);
+                WriteLine("2. FFU", ConsoleColor.Blue);
+                WriteLine("3. IUTool", ConsoleColor.DarkGray);
+                WriteLine("4. Download CABs", ConsoleColor.DarkYellow);
                 Write("Choice: ", ConsoleColor.Magenta);
-                ConsoleKeyInfo csvTargetAction;
+                ConsoleKeyInfo updateTargetAction;
                 do
                 {
-                    csvTargetAction = Console.ReadKey(true);
+                    updateTargetAction = Console.ReadKey(true);
                 }
-                while (!IsNumberKeyOrNumpad(csvTargetAction, new char[] { '1', '2' }));
-                Write(csvTargetAction.KeyChar.ToString() + "\n");
+                while (!IsNumberKeyOrNumpad(updateTargetAction, new char[] { '1', '2', '3', '4' }));
+                char targetDigit = NormalizeNumberKey(updateTargetAction);
+                Write(targetDigit.ToString() + "\n");
 
-                if (csvTargetAction.KeyChar == '1')
+                if (targetDigit == '4')
                 {
-                chooseCSVArea:
-                    var csvFilePath = await GeneralPicker.ShowOpenFileDialogAsync("csv");
-                    if (string.IsNullOrEmpty(csvFilePath))
+                    await HandleDownloadCabsMode();
+                    await printLogLocation();
+                    return;
+                }
+
+                pushToFFU = targetDigit == '2';
+                iutoolMode = targetDigit == '3';
+
+                if (pushToFFU)
+                {
+                ffuPathArea:
+                    // Ask for FFU
+                    WriteLine("\n[NOTICE]", ConsoleColor.Red);
+                    WriteLine("- After flashing FFU, phone will perform hard reset", ConsoleColor.DarkYellow);
+                    WriteLine("- Ensure to have enough space at C: drive", ConsoleColor.Gray);
+                    WriteLine("- No FFUs mounted before, check Computer Management", ConsoleColor.Gray);
+                    WriteLine("- Don't interrupt the process until you asked for", ConsoleColor.Gray);
+                    WriteLine("- Cleanup system temp after this process", ConsoleColor.Gray);
+
+                    printFlashInstructions();
+
+                    FFUPath = await GeneralPicker.ShowOpenFileDialogAsync("ffu");
+                    Write("\nFFU path: ", ConsoleColor.DarkYellow);
+                    WriteLine((FFUPath ?? string.Empty) + "\n");
+                    if (FFUPath == null || FFUPath.Length == 0 || !File.Exists(FFUPath))
                     {
-                        WriteLine("\nFile path is not valid!", ConsoleColor.Red);
+                        if (PushPackages.showRetryQuestion("FFU path is not valid or not exist", "Exit", ConsoleColor.Red))
+                        {
+                            goto ffuPathArea;
+                        }
+                        else
+                        {
+                            await printLogLocation();
+                            return;
+                        }
+                    }
+
+                    GetDeviceInfo.OfflineFFU();
+                    useConnectedDevice = false;
+                }
+                else if (iutoolMode)
+                {
+                    // Ask for CSV
+                    WriteLine("\n[IMPORTANT]", ConsoleColor.Red);
+                    WriteLine("- You need to filter cabs correctly", ConsoleColor.DarkYellow);
+                    WriteLine("- Use `Choose InstalledPackages.csv`", ConsoleColor.Gray);
+                    WriteLine("- Or skip if you have cabs filtered", ConsoleColor.Gray);
+
+                    WriteLine("");
+                    WriteLine("[FILTER FILE]", ConsoleColor.DarkGray);
+                    WriteLine("1. Choose `InstalledPackages.csv`", ConsoleColor.Green);
+                    WriteLine("2. Skip", ConsoleColor.Blue);
+                    Write("Choice: ", ConsoleColor.Magenta);
+                    ConsoleKeyInfo csvTargetAction;
+                    do
+                    {
+                        csvTargetAction = Console.ReadKey(true);
+                    }
+                    while (!IsNumberKeyOrNumpad(csvTargetAction, new char[] { '1', '2' }));
+                    Write(csvTargetAction.KeyChar.ToString() + "\n");
+
+                    if (csvTargetAction.KeyChar == '1')
+                    {
+                    chooseCSVArea:
+                        var csvFilePath = await GeneralPicker.ShowOpenFileDialogAsync("csv");
+                        if (string.IsNullOrEmpty(csvFilePath) || !File.Exists(csvFilePath))
+                        {
+                            WriteLine("\nFile path is not valid!", ConsoleColor.Red);
+                            WriteLine("1. Retry");
+                            WriteLine("2. Skip");
+                            Write("Choice: ", ConsoleColor.Magenta);
+                            ConsoleKeyInfo csvRetryAction;
+                            do
+                            {
+                                csvRetryAction = Console.ReadKey(true);
+                            }
+                            while (!IsNumberKeyOrNumpad(csvRetryAction, new char[] { '1', '2' }));
+                            Write(csvRetryAction.KeyChar.ToString() + "\n");
+                            if (csvRetryAction.KeyChar == '1')
+                            {
+                                WriteLine("");
+                                goto chooseCSVArea;
+                            }
+                        }
+                        else
+                        {
+                            Write("\nCSV file: ", ConsoleColor.DarkYellow);
+                            WriteLine($"{csvFilePath}\n");
+                            DownloadPackages.installedPackages = File.ReadAllLines(csvFilePath);
+                        }
+                    }
+                    else
+                    {
+                        WriteLine("User skipped `InstalledPackages.csv`\nAll packages will be pushed by default", ConsoleColor.DarkYellow);
+                    }
+
+                    GetDeviceInfo.OfflineIUTool();
+                    useConnectedDevice = false;
+                }
+
+                var packagesReady = false;
+                string selectedUpdateOption = "1";
+                if (useConnectedDevice)
+                {
+                    if (!await ReadConnectedDeviceInfoAsync(false))
+                    {
+                        await printLogLocation();
+                        return;
+                    }
+
+                    var availableUpdates = CheckForUpdates.AvailableUpdates();
+                    if (CheckForUpdates.Choice == 1)
+                    {
+                        WriteLine("\nThe OS version didn't reached the minimum required build.", ConsoleColor.Red);
+                        Write("Please update to ", ConsoleColor.Red);
+                        Write("'8.10.14219.341'", ConsoleColor.Blue);
+                        WriteLine(" at least.", ConsoleColor.Red);
+                        await printLogLocation();
+                        return;
+                    }
+
+                    Write("\nPUSH MODE: ", ConsoleColor.Gray);
+                    WriteLine(pushToFFU ? (PushPackages.useOldTools ? "FFU (SPKG)" : "FFU (CBS)") : "DEVICE", pushToFFU ? (PushPackages.useOldTools ? ConsoleColor.DarkYellow : ConsoleColor.Blue) : ConsoleColor.Green);
+                    if (pushToFFU && !string.IsNullOrEmpty(FFUPath))
+                    {
+                        WriteLine($"FFU PATH: {FFUPath}", ConsoleColor.DarkGray);
+                    }
+
+                    WriteLine("\nAVAILABLE UPDATES", ConsoleColor.DarkGray);
+                    var updatesArray = availableUpdates.Split('\n');
+                    foreach (var updateItem in updatesArray)
+                    {
+                        if (updateItem.IndexOf("Offline", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            WriteLine(updateItem, ConsoleColor.DarkYellow);
+                        }
+                        else
+                        {
+                            WriteLine(updateItem, ConsoleColor.Gray);
+                        }
+                    }
+
+                    Write("Choice: ", ConsoleColor.Magenta);
+
+                    if (CheckForUpdates.Choice == 7)
+                    {
+                        do
+                        {
+                            selectedUpdate = Console.ReadKey(true);
+                        }
+                        while (!IsNumberKeyOrNumpad(selectedUpdate, new char[] { '1' }));
+                    }
+                    else if (CheckForUpdates.Choice == 3 || CheckForUpdates.Choice == 4 || CheckForUpdates.Choice == 6)
+                    {
+                        do
+                        {
+                            selectedUpdate = Console.ReadKey(true);
+                        }
+                        while (!IsNumberKeyOrNumpad(selectedUpdate, new char[] { '1', '2' }));
+                    }
+                    else if (CheckForUpdates.Choice == 2 || CheckForUpdates.Choice == 5)
+                    {
+                        do
+                        {
+                            selectedUpdate = Console.ReadKey(true);
+                        }
+                        while (!IsNumberKeyOrNumpad(selectedUpdate, new char[] { '1', '2', '3' }));
+                    }
+                    else
+                    {
+                        WriteLine("\nSomething went wrong.", ConsoleColor.Red);
+                        await printLogLocation();
+                        return;
+                    }
+                    char selectedDigit = NormalizeNumberKey(selectedUpdate);
+                    Write(selectedDigit + "\n");
+
+                    selectedUpdateOption = selectedDigit.ToString();
+                }
+                else
+                {
+                    // Fall to offline by default
+                    CheckForUpdates.Choice = 7;
+                }
+
+                string targetBuild = updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdateOption) - 1];
+                if (targetBuild == "Offline")
+                {
+                packagePathArea:
+                    packagePath = await GeneralPicker.ShowSelectFolderDialogAsync();
+                    if (string.IsNullOrEmpty(packagePath))
+                    {
+                        WriteLine("\nFolder path is not valid!", ConsoleColor.Red);
                         WriteLine("1. Retry");
-                        WriteLine("2. Skip");
+                        WriteLine("2. Exit");
                         Write("Choice: ", ConsoleColor.Magenta);
                         ConsoleKeyInfo csvRetryAction;
                         do
@@ -363,200 +961,60 @@ namespace Universal_Updater
                             csvRetryAction = Console.ReadKey(true);
                         }
                         while (!IsNumberKeyOrNumpad(csvRetryAction, new char[] { '1', '2' }));
-                        Console.Write(csvRetryAction.KeyChar.ToString() + "\n");
+                        Write(csvRetryAction.KeyChar.ToString() + "\n");
                         if (csvRetryAction.KeyChar == '1')
                         {
                             WriteLine("");
-                            goto chooseCSVArea;
-                        }
-                    }
-                    else
-                    {
-                        Write("\nCSV file: ", ConsoleColor.DarkYellow);
-                        WriteLine($"{csvFilePath}\n");
-                        DownloadPackages.installedPackages = File.ReadAllLines(csvFilePath);
-                    }
-
-                }
-                else
-                {
-                    WriteLine("User skipped `InstalledPackages.csv`\nAll packages will be pushed by default", ConsoleColor.DarkYellow);
-                }
-
-                GetDeviceInfo.OfflineIUTool();
-                useConnectedDevice = false;
-            }
-
-            var packagesReady = false;
-            string selectedUpdateOption = "1";
-            if (useConnectedDevice)
-            {
-                ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
-                bool deviceInfoReady = false;
-                while (!deviceInfoReady)
-                {
-                    ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
-                    var exitCode = GetDeviceInfo.GetLog();
-                    deviceInfoReady = exitCode == 0;
-                    await Task.Delay(1000);
-                    if (!deviceInfoReady)
-                    {
-                        if (exitCode == -1)
-                        {
-                            ConsoleStyle("Read device info (Timeout), retrying . . .", 0, ConsoleColor.Red);
+                            goto packagePathArea;
                         }
                         else
                         {
-                            string formattedErrorCode = "0x" + exitCode.ToString("X");
-                            ConsoleStyle($"Cannot read device info ({formattedErrorCode}), retrying . . .", 0, ConsoleColor.Red);
-                            if (formattedErrorCode == "0x8000FFFF")
-                            {
-                                // Usually appear if device is not connected
-                                WriteLine("");
-                                WriteLine("Ensure the device is connected properly", ConsoleColor.Red);
-                            }
-                            // Give user more time to read and copy error
-                            await Task.Delay(3000);
+                            await printLogLocation();
+                            return;
                         }
-                        await Task.Delay(2000);
-                        // Give small delay between retries
-                        await retryWithCount(3);
                     }
-                }
 
-                ConsoleStyle("Reading device info . . .", 0, ConsoleColor.DarkYellow);
-                var deviceInfo = await GetDeviceInfo.ReadInfo();
-                if (deviceInfo == null)
-                {
-                    ConsoleStyle("Couldn't read the device information.\nMake sure that you have no pending updates on your phone settings.", 0, ConsoleColor.Red);
-                    printLogLocation();
-                    return;
-                }
-
-                ConsoleStyle("TARGET INFORMATIONS", 1, ConsoleColor.DarkGray);
-                foreach (string info in deviceInfo)
-                {
-                    WriteLine(info);
-                }
-                DownloadPackages.installedPackages = File.ReadAllLines(tempDirectory + @"\InstalledPackages.csv");
-
-                var availableUpdates = CheckForUpdates.AvailableUpdates();
-                if (CheckForUpdates.Choice == 1)
-                {
-                    WriteLine("\nThe OS version didn't reached the minimum required build.", ConsoleColor.Red);
-                    Write("Please update to ", ConsoleColor.Red);
-                    Write("'8.10.14219.341'", ConsoleColor.Blue);
-                    WriteLine(" at least.", ConsoleColor.Red);
-                    return;
-                }
-
-
-                Write("\nPUSH MODE: ", ConsoleColor.Gray);
-
-                WriteLine(pushToFFU ? (PushPackages.useOldTools ? "FFU (SPKG)" : "FFU (CBS)") : "DEVICE", pushToFFU ? (PushPackages.useOldTools ? ConsoleColor.DarkYellow : ConsoleColor.Blue) : ConsoleColor.Green);
-                if (pushToFFU && !string.IsNullOrEmpty(FFUPath))
-                {
-                    WriteLine($"FFU PATH: {FFUPath}", ConsoleColor.DarkGray);
-                }
-
-                WriteLine("\nAVAILABLE UPDATES", ConsoleColor.DarkGray);
-                var updatesArray = availableUpdates.Split('\n');
-                foreach (var updateItem in updatesArray)
-                {
-                    if (updateItem.IndexOf("Offline") >= 0)
+                    Write("\nOffline packages: ", ConsoleColor.DarkYellow);
+                    WriteLine($"{packagePath}\n");
+                    string[] folderFiles = new string[] { };
+                    if (Directory.Exists(packagePath))
                     {
-                        WriteLine(updateItem, ConsoleColor.DarkYellow);
+                        folderFiles = Directory.GetFiles(packagePath);
+                        var hasValidPackages = folderFiles.Any(f => DownloadPackages.TryParsePackageFile(f, out _, out _, out _));
+                        if (!hasValidPackages)
+                        {
+                            WriteLine("\nFolder don't have update packages (.cab / .spkg)!", ConsoleColor.Red);
+                            WriteLine("1. Retry");
+                            WriteLine("2. Exit");
+                            Write("Choice: ", ConsoleColor.Magenta);
+                            ConsoleKeyInfo packagesAction;
+                            do
+                            {
+                                packagesAction = Console.ReadKey(true);
+                            }
+                            while (!IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
+                            Write(packagesAction.KeyChar.ToString() + "\n");
+                            if (packagesAction.KeyChar == '1')
+                            {
+                                WriteLine("");
+                                goto packagePathArea;
+                            }
+                            else
+                            {
+                                await printLogLocation();
+                                return;
+                            }
+                        }
+                    }
+                    if (folderFiles.Length > 0)
+                    {
+                        showFeaturesSelection(folderFiles);
+                        WriteLine("\nPREPARING PACKAGES", ConsoleColor.DarkGray);
+                        packagesReady = await DownloadPackages.OfflineUpdate(folderFiles);
                     }
                     else
                     {
-                        WriteLine(updateItem, ConsoleColor.Gray);
-                    }
-                }
-
-
-                Write("Choice: ", ConsoleColor.Magenta);
-
-
-                if (CheckForUpdates.Choice == 7)
-                {
-                    do
-                    {
-                        selectedUpdate = Console.ReadKey(true);
-                    }
-                    while (selectedUpdate.KeyChar != '1');
-                }
-                else if (CheckForUpdates.Choice == 3 || CheckForUpdates.Choice == 4 || CheckForUpdates.Choice == 6)
-                {
-                    do
-                    {
-                        selectedUpdate = Console.ReadKey(true);
-                    }
-                    while (selectedUpdate.KeyChar != '1' && selectedUpdate.KeyChar != '2');
-                }
-                else if (CheckForUpdates.Choice == 2 || CheckForUpdates.Choice == 5)
-                {
-                    do
-                    {
-                        selectedUpdate = Console.ReadKey(true);
-                    }
-                    while (selectedUpdate.KeyChar != '1' && selectedUpdate.KeyChar != '2' && selectedUpdate.KeyChar != '3');
-                }
-                else
-                {
-                    WriteLine("\nSomething went wrong.", ConsoleColor.Red);
-                    printLogLocation();
-                    return;
-                }
-                Write(selectedUpdate.KeyChar + "\n");
-
-                selectedUpdateOption = selectedUpdate.KeyChar.ToString();
-            }
-            else
-            {
-                // Fall to offline by default
-                CheckForUpdates.Choice = 7;
-            }
-
-            if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdateOption) - 1] == "Offline")
-            {
-            packagePathArea:
-                packagePath = await GeneralPicker.ShowSelectFolderDialogAsync();
-                if (string.IsNullOrEmpty(packagePath))
-                {
-                    WriteLine("\nFolder path is not valid!", ConsoleColor.Red);
-                    WriteLine("1. Retry");
-                    WriteLine("2. Exit");
-                    Write("Choice: ", ConsoleColor.Magenta);
-                    ConsoleKeyInfo csvRetryAction;
-                    do
-                    {
-                        csvRetryAction = Console.ReadKey(true);
-                    }
-                    while (!IsNumberKeyOrNumpad(csvRetryAction, new char[] { '1', '2' }));
-                    Console.Write(csvRetryAction.KeyChar.ToString() + "\n");
-                    if (csvRetryAction.KeyChar == '1')
-                    {
-                        WriteLine("");
-                        goto packagePathArea;
-                    }
-                    else
-                    {
-                        printLogLocation();
-                        return;
-                    }
-                }
-
-                Write("\nOffline packages: ", ConsoleColor.DarkYellow);
-                WriteLine($"{packagePath}\n");
-                string[] folderFiles = new string[] { };
-                if (Directory.Exists(packagePath))
-                {
-                    folderFiles = Directory.GetFiles(packagePath);
-                    var hasCabFiles = string.Join("\n", folderFiles).IndexOf(".cab", StringComparison.OrdinalIgnoreCase) > 0;
-                    var hasSpkgFiles = string.Join("\n", folderFiles).IndexOf(".spkg", StringComparison.OrdinalIgnoreCase) > 0;
-                    if (!hasCabFiles && !hasSpkgFiles)
-                    {
-                        WriteLine("\nFolder don't have update packages (.cab)!", ConsoleColor.Red);
+                        WriteLine("\nFolder is empty or not exists!", ConsoleColor.Red);
                         WriteLine("1. Retry");
                         WriteLine("2. Exit");
                         Write("Choice: ", ConsoleColor.Magenta);
@@ -566,7 +1024,7 @@ namespace Universal_Updater
                             packagesAction = Console.ReadKey(true);
                         }
                         while (!IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
-                        Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                        Write(packagesAction.KeyChar.ToString() + "\n");
                         if (packagesAction.KeyChar == '1')
                         {
                             WriteLine("");
@@ -574,145 +1032,109 @@ namespace Universal_Updater
                         }
                         else
                         {
-                            printLogLocation();
+                            await printLogLocation();
                             return;
                         }
                     }
                 }
-                if (folderFiles.Length > 0)
-                {
-                    showFeaturesSelection(folderFiles);
-                    WriteLine("\nPREPARING PACKAGES", ConsoleColor.DarkGray);
-                    packagesReady = await DownloadPackages.OfflineUpdate(folderFiles);
-                }
                 else
                 {
-                    WriteLine("\nFolder is empty or not exists!", ConsoleColor.Red);
-                    WriteLine("1. Retry");
-                    WriteLine("2. Exit");
-                    Write("Choice: ", ConsoleColor.Magenta);
-                    ConsoleKeyInfo packagesAction;
-                    do
-                    {
-                        packagesAction = Console.ReadKey(true);
-                    }
-                    while (!IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
-                    Write(packagesAction.KeyChar.ToString() + "\n");
-                    if (packagesAction.KeyChar == '1')
-                    {
-                        WriteLine("");
-                        goto packagePathArea;
-                    }
-                    else
-                    {
-                        printLogLocation();
-                        return;
-                    }
+                    bool IsFeatureInstalled = DownloadPackages.OnlineUpdate(targetBuild);
+                    PromptOnlineFeatureSelection(targetBuild, IsFeatureInstalled);
+
+                    WriteLine("\nDOWNLOADING PACKAGES", ConsoleColor.DarkGray);
+                    await WaitForInternetAsync();
+
+                    ConsoleStyle("\nDOWNLOADING PACKAGES", 1, ConsoleColor.DarkGray);
+                    packagesReady = await DownloadPackages.DownloadUpdate(targetBuild);
                 }
-            }
-            else
-            {
-                bool IsFeatureInstalled = DownloadPackages.OnlineUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1]);
-                if (IsFeatureInstalled == false)
+
+                string messageBoxText = "";
+                if (packagesReady)
                 {
-                    if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13016.108" || updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(Program.selectedUpdate.KeyChar.ToString()) - 1] == "13037.0")
+                    if (!pushToFFU)
                     {
-                        WriteLine("\nAVAILABLE FEATURES", ConsoleColor.DarkGray);
-                        if (updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1] == "14393.1066")
+                        WriteLine("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
+                        await PushPackages.StartUpdate();
+                        await Task.Delay(2000);
+                        var commonErrors = "\n\nCommon Errors:";
+                        commonErrors += "\n\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
+                        commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
+                        commonErrors += "\n\n0x80188302: Package already present on the image";
+                        commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
+                        commonErrors += "\n\n0x80188306: File Collision or Not Found\nSolution: ensure list match InstalledPackages.csv";
+                        commonErrors += "\n\n0x80188307: Package DSM; or contents are invalid\nSolution: Keep only one type in the folder CBS or SPKG,\nChoose the correct packages type";
+                        commonErrors += "\n\n0x80188308: Not enough space";
+                        commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
+                        commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
+                        commonErrors += "\n\n0x802A0006: Try with another PC";
+                        if (PushPackages.lastIutoolExitCode == 0)
                         {
-                            printRCSMessage();
+                            messageBoxText = $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}";
                         }
                         else
                         {
-                            printProjectAMessage();
+                            string formattedExitCode = "0x" + PushPackages.lastIutoolExitCode.ToString("X");
+                            messageBoxText = $"iutool.exe exited with code {formattedExitCode} ({PushPackages.lastIutoolExitCode}). Check the log for details.\n{commonErrors}";
                         }
-                        do
-                        {
-                            featureChoice = Console.ReadKey(true);
-                        }
-                        while (featureChoice.KeyChar != 'Y' && featureChoice.KeyChar != 'N' && featureChoice.KeyChar != 'y' && featureChoice.KeyChar != 'n');
-                        Write(featureChoice.KeyChar.ToString().ToUpper() + "\n");
-                    }
-                }
-                WriteLine("\nDOWNLOADING PACKAGES", ConsoleColor.DarkGray);
-                while (!IsInternetConnected())
-                {
-                    ConsoleStyle("Waiting for internet to connect . . .", 1, ConsoleColor.DarkYellow);
-                    await Task.Delay(2000);
-                }
-
-                ConsoleStyle("\nDOWNLOADING PACKAGES", 1, ConsoleColor.DarkGray);
-                packagesReady = await DownloadPackages.DownloadUpdate(updateStructure[CheckForUpdates.Choice - 1, Convert.ToInt32(selectedUpdate.KeyChar.ToString()) - 1]);
-            }
-
-            string messageBoxText = "";
-            if (packagesReady)
-            {
-                if (!pushToFFU)
-                {
-                    WriteLine("\nPUSHING PACKAGES", ConsoleColor.DarkGray);
-                    await PushPackages.StartUpdate();
-                    await Task.Delay(2000);
-                    var commonErrors = "\n\nCommon Errors:";
-                    commonErrors += "\n\n0x800b010a: Signature Verification Issue\nSolution: Enable flight signing";
-                    commonErrors += "\n\n0x800b0101: Incorrect Date and Time\nSolution: Change date";
-                    commonErrors += "\n\n0x80188302: Package already present on the image";
-                    commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
-                    commonErrors += "\n\n0x80188306: File Collision or Not Found\nSolution: ensure list match InstalledPackages.csv";
-                    commonErrors += "\n\n0x80188307: Package DSM; or contents are invalid\nSolution: Keep only one type in the folder CBS or SPKG,\nChoose the correct packages type";
-                    commonErrors += "\n\n0x80188308: Not enough space";
-                    commonErrors += "\n\n0x800b0114: Certificate has an invalid name\nSolution: Enable flight signing";
-                    commonErrors += "\n\n0x80004005: E_FAIL\nSolution: Reboot the phone and try again";
-                    commonErrors += "\n\n0x802A0006: Try with another PC";
-                    if (!PushPackages.updateProcess.HasExited)
-                    {
-                        messageBoxText = $"Please navigate to update settings on your phone. As soon as the update shows progression, you can safely disconnect your phone from the PC.\n{commonErrors}";
                     }
                     else
                     {
-                        messageBoxText = $"Error may detected!\n{commonErrors}";
+                        WriteLine("\nPUSHING PACKAGES (FFU)", ConsoleColor.DarkGray);
+                        await PushPackages.PushToFFU(DownloadPackages.FFUMountData);
+
+                        var commonErrors = "Common Errors:";
+                        commonErrors += "\n\n0x80070490: ERROR_NOT_FOUND\nSolution: Mount the FFU first\nThis also may happen if disk full";
+                        commonErrors += "\n\n0x80070002: ERROR_FILE_NOT_FOUND";
+                        commonErrors += "\n\n0x80070241: ERROR_INVALID_IMAGE_HASH";
+                        commonErrors += "\n\n0x80188302: Package already present on the image";
+                        commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
+                        messageBoxText = $"Ensure to clean system temp after this process\n\n{commonErrors}";
                     }
                 }
                 else
                 {
-                    WriteLine("\nPUSHING PACKAGES (FFU)", ConsoleColor.DarkGray);
-                    await PushPackages.PushToFFU(DownloadPackages.FFUMountData);
-
-                    var commonErrors = "Common Errors:";
-                    commonErrors += "\n\n0x80070490: ERROR_NOT_FOUND\nSolution: Mount the FFU first\nThis also may happen if disk full";
-                    commonErrors += "\n\n0x80070002: ERROR_FILE_NOT_FOUND";
-                    commonErrors += "\n\n0x80070241: ERROR_INVALID_IMAGE_HASH";
-                    commonErrors += "\n\n0x80188302: Package already present on the image";
-                    commonErrors += "\n\n0x80188305: Duplicate packages found in update set";
-                    messageBoxText = $"Ensure to clean system temp after this process\n\n{commonErrors}";
+                    if (DownloadPackages.FFUMountData != null)
+                    {
+                        await PushPackages.dismountFFUQuestion(DownloadPackages.FFUMountData);
+                        DownloadPackages.FFUMountData = null;
+                    }
+                    WriteLine("\nOperation cancelled\n", ConsoleColor.Red);
                 }
+
+                Task exitPromptTask = printLogLocation();
+
+                if (messageBoxText.Length > 0)
+                {
+                    MessageBox((IntPtr)0, messageBoxText, "Universal Updater.exe", 0);
+                }
+
+                await exitPromptTask;
             }
-            else
+            catch (Exception ex)
             {
+                appendLog($"[FATAL] {ex}\n");
+                WriteLine($"\nUnexpected error: {ex.Message}", ConsoleColor.Red);
                 if (DownloadPackages.FFUMountData != null)
                 {
-                    await PushPackages.dismountFFUQuestion(DownloadPackages.FFUMountData);
+                    try
+                    {
+                        await PushPackages.dismountFFU(DownloadPackages.FFUMountData, null);
+                    }
+                    catch { }
                     DownloadPackages.FFUMountData = null;
                 }
-                WriteLine("\nOperation cancelled\n", ConsoleColor.Red);
+                await printLogLocation();
             }
-
-            printLogLocation();
-
-            if (messageBoxText.Length > 0)
-            {
-                MessageBox((IntPtr)0, messageBoxText, "Universal Updater.exe", 0);
-            }
-            return;
         }
 
-        static void printLogLocation()
+        static Task printLogLocation()
         {
             var previewLogFile = logFile.Replace($@"{Environment.CurrentDirectory}\", "");
             WriteLine($"\nFinished.\n\nFor more details check the logs\n{previewLogFile}\n", ConsoleColor.DarkGray);
 
             // Run this as task to avoid blocking the final dialog
-            Task.Run(() =>
+            return Task.Run(() =>
             {
                 WriteLine("\nDo you want to restart Universal Updater?", ConsoleColor.Blue);
                 WriteLine("1. Yes");
@@ -724,7 +1146,7 @@ namespace Universal_Updater
                     packagesAction = Console.ReadKey(true);
                 }
                 while (!IsNumberKeyOrNumpad(packagesAction, new char[] { '1', '2' }));
-                Console.Write(packagesAction.KeyChar.ToString() + "\n");
+                Write(packagesAction.KeyChar.ToString() + "\n");
                 if (packagesAction.KeyChar == '1')
                 {
                     RestartApplication();
@@ -745,6 +1167,7 @@ namespace Universal_Updater
         public static List<FeaturesItem> GlobalFeaturesList = new List<FeaturesItem>();
         static void showFeaturesSelection(string[] folderFiles)
         {
+            GlobalFeaturesList.Clear();
             LoadUpdateRules(packagePath);
             try
             {
@@ -756,7 +1179,11 @@ namespace Universal_Updater
                         var data = File.ReadAllText(featuresFile);
                         if (!string.IsNullOrEmpty(data))
                         {
-                            GlobalFeaturesList = JsonConvert.DeserializeObject<List<FeaturesItem>>(data);
+                            var loaded = JsonConvert.DeserializeObject<List<FeaturesItem>>(data);
+                            if (loaded != null)
+                            {
+                                GlobalFeaturesList = loaded;
+                            }
                         }
                         else
                         {
@@ -787,9 +1214,12 @@ namespace Universal_Updater
                                     try
                                     {
                                         var featureObject = JsonConvert.DeserializeObject<FeaturesItem>(featureInfoCheckData);
-                                        GlobalFeaturesList.Add(featureObject);
+                                        if (featureObject != null)
+                                        {
+                                            GlobalFeaturesList.Add(featureObject);
+                                        }
                                     }
-                                    catch (Exception ex2)
+                                    catch
                                     {
                                         // This file may have array instead
                                         var featuresObjects = JsonConvert.DeserializeObject<List<FeaturesItem>>(featureInfoCheckData);
@@ -797,7 +1227,10 @@ namespace Universal_Updater
                                         {
                                             foreach (var featureObject in featuresObjects)
                                             {
-                                                GlobalFeaturesList.Add(featureObject);
+                                                if (featureObject != null)
+                                                {
+                                                    GlobalFeaturesList.Add(featureObject);
+                                                }
                                             }
                                         }
                                     }
@@ -832,8 +1265,15 @@ namespace Universal_Updater
 
                     while (true)
                     {
-                        int newRow = Math.Max(Console.CursorTop - (filteredFeatures.Count + 1), 0);
-                        Console.SetCursorPosition(0, newRow);
+                        if (!Console.IsOutputRedirected)
+                        {
+                            try
+                            {
+                                int newRow = Math.Max(Console.CursorTop - (filteredFeatures.Count + 1), 0);
+                                Console.SetCursorPosition(0, newRow);
+                            }
+                            catch { }
+                        }
 
                         // Display features with checkboxes
                         for (int i = 0; i < filteredFeatures.Count; i++)
@@ -843,7 +1283,6 @@ namespace Universal_Updater
                                 string checkbox = filteredFeatures[i].State ? "[ON]" : "[  ]";
                                 ConsoleColor color = filteredFeatures[i].State ? ConsoleColor.Green : ConsoleColor.Red;
                                 Write($"{i + 1}. ", color, false, false);
-                                //Write($"{i + 1}. {checkbox} {filteredFeatures[i].Name}", filteredFeatures[i].State ? ConsoleColor.Green : ConsoleColor.Red, false, false);
                                 Write($"{checkbox} ", color, false, false);
                                 Write($"{filteredFeatures[i].Name}", color, false, false);
                                 WriteLine($" {filteredFeatures[i].Description}", filteredFeatures[i].DescriptionColor, false, false);
@@ -945,6 +1384,7 @@ namespace Universal_Updater
             bool allowToRun = true;
 
             logFile = prepareLogFile("universal_updater.exe");
+            new OutputCapture();
 
             if ((!IsDependenciesInstalled("Microsoft Visual C++ 2012 Redistributable (x86)")) &&
                 ((!IsDependenciesInstalled("Microsoft Visual C++ 2012 x86 Minimum Runtime")) ||
@@ -953,7 +1393,7 @@ namespace Universal_Updater
                 WriteLine("Error:\n  An assembly in the application dependencies manifest was not found:\n    package: 'Microsoft.Visual.C++.2012.Redistributable.(x86)'", ConsoleColor.Red);
                 allowToRun = false;
             }
-            else if ((!IsDependenciesInstalled("Microsoft Visual C++ 2013 Redistributable (x86)"))
+            else if ((!IsDependenciesInstalled("Microsoft Visual C++ 2013 Redistributable (x86)")) &&
                      ((!IsDependenciesInstalled("Microsoft Visual C++ 2013 x86 Minimum Runtime")) ||
                       (!IsDependenciesInstalled("Microsoft Visual C++ 2013 x86 Additional Runtime"))))
             {
@@ -969,25 +1409,19 @@ namespace Universal_Updater
                     allowToRun = false;
                 }
             }
-            catch (Exception ex)
+            catch
             {
-
             }
 
             if (allowToRun)
             {
-                StartUpdater();
+                StartUpdater().GetAwaiter().GetResult();
             }
             else
             {
-                Task.Run(async () =>
-                {
-                    await Task.Delay(10000);
-                    Environment.Exit(0);
-                });
+                Thread.Sleep(10000);
+                Environment.Exit(0);
             }
-            new OutputCapture();
-            new Program();
         }
 
         static void PrintMachineInformation()
@@ -1027,33 +1461,66 @@ namespace Universal_Updater
 
         static void ConsoleStyle(string text, int line, ConsoleColor color = ConsoleColor.White)
         {
-            Console.ResetColor();
-            Console.SetWindowSize(115, 29);
-            Console.SetBufferSize(115, 400);
-            Console.Title = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName;
-            Console.Clear();
-            Console.ForegroundColor = ConsoleColor.Magenta;
-            Console.Write(Path.GetFileNameWithoutExtension(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName));
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine(" Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion);
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("- " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName);
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("- Contributors: Bashar Astifan");
-            Console.ForegroundColor = ConsoleColor.DarkYellow;
-            Console.WriteLine("- This app provided AS-IS without any warranty");
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine("- GitHub: https://github.com/fadilfadz01/Universal_Updater");
+            var versionInfo = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location);
+            lock (logLock)
+            {
+                if (!Console.IsOutputRedirected)
+                {
+                    try
+                    {
+                        Console.ResetColor();
+                        int targetWidth = Math.Min(115, Console.LargestWindowWidth > 0 ? Console.LargestWindowWidth : 115);
+                        int targetHeight = Math.Min(29, Console.LargestWindowHeight > 0 ? Console.LargestWindowHeight : 29);
+                        if (Console.BufferWidth < targetWidth)
+                        {
+                            Console.SetBufferSize(targetWidth, Math.Max(Console.BufferHeight, 400));
+                        }
+                        if (Console.BufferHeight < targetHeight)
+                        {
+                            Console.SetBufferSize(Math.Max(Console.BufferWidth, targetWidth), 400);
+                        }
+                        Console.SetWindowSize(targetWidth, targetHeight);
+                        Console.SetBufferSize(targetWidth, 400);
+                    }
+                    catch { }
 
-            Console.WriteLine(string.Empty);
-            Console.ForegroundColor = color;
-            if (line == 0)
-            {
-                Console.Write(text);
-            }
-            else
-            {
-                Console.WriteLine(text);
+                    try
+                    {
+                        Console.Title = versionInfo.InternalName;
+                    }
+                    catch { }
+
+                    try
+                    {
+                        Console.Clear();
+                    }
+                    catch { }
+                }
+
+                if (!Console.IsOutputRedirected) try { Console.ForegroundColor = ConsoleColor.Magenta; } catch { }
+                Console.Write(Path.GetFileNameWithoutExtension(versionInfo.InternalName));
+                if (!Console.IsOutputRedirected) try { Console.ForegroundColor = ConsoleColor.DarkGray; } catch { }
+                Console.WriteLine(" Version " + versionInfo.FileVersion);
+                if (!Console.IsOutputRedirected) try { Console.ForegroundColor = ConsoleColor.Green; } catch { }
+                Console.WriteLine("- " + versionInfo.LegalCopyright + " by " + versionInfo.CompanyName);
+                if (!Console.IsOutputRedirected) try { Console.ForegroundColor = ConsoleColor.DarkGray; } catch { }
+                Console.WriteLine("- Contributors: Bashar Astifan");
+                if (!Console.IsOutputRedirected) try { Console.ForegroundColor = ConsoleColor.DarkYellow; } catch { }
+                Console.WriteLine("- This app provided AS-IS without any warranty");
+                if (!Console.IsOutputRedirected) try { Console.ForegroundColor = ConsoleColor.DarkGray; } catch { }
+                Console.WriteLine("- GitHub: https://github.com/fadilfadz01/Universal_Updater");
+
+                Console.WriteLine(string.Empty);
+                if (!Console.IsOutputRedirected) try { Console.ForegroundColor = color; } catch { }
+                if (line == 0)
+                {
+                    Console.Write(text);
+                }
+                else
+                {
+                    Console.WriteLine(text);
+                }
+                if (!Console.IsOutputRedirected) try { Console.ResetColor(); } catch { }
             }
         }
         public static void showTitleWaitMessage(bool state, string extraDetails = "")
@@ -1070,13 +1537,18 @@ namespace Universal_Updater
                     extraTitleText = " (Please wait...)";
                 }
             }
-            Console.Title = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName + extraTitleText;
+            try
+            {
+                Console.Title = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName + extraTitleText;
+            }
+            catch { }
         }
         static void appendAppInfoToLog()
         {
-            appendLog(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).InternalName + "\n");
-            appendLog("Version " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion + "\n");
-            appendLog(FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).LegalCopyright + " by " + FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).CompanyName + "\n");
+            var versionInfo = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location);
+            appendLog(versionInfo.InternalName + "\n");
+            appendLog("Version " + versionInfo.FileVersion + "\n");
+            appendLog(versionInfo.LegalCopyright + " by " + versionInfo.CompanyName + "\n");
             appendLog("This app provided AS-IS without any warranty" + "\n");
             appendLog("GitHub: https://github.com/fadilfadz01/Universal_Updater" + "\n");
             appendLog("IUTool: https://learn.microsoft.com/en-us/previous-versions/mt131833(v=vs.85)" + "\n\n");
@@ -1087,10 +1559,14 @@ namespace Universal_Updater
         public static string GetResourceFile(string resourceName, bool dump = false)
         {
             var embeddedResource = Assembly.GetExecutingAssembly().GetManifestResourceNames().Where(s => s.IndexOf(resourceName, StringComparison.OrdinalIgnoreCase) >= 0).ToArray();
-            if (!string.IsNullOrWhiteSpace(embeddedResource[0]))
+            if (embeddedResource.Length > 0 && !string.IsNullOrWhiteSpace(embeddedResource[0]))
             {
                 using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(embeddedResource[0]))
                 {
+                    if (stream == null)
+                    {
+                        return null;
+                    }
                     if (dump)
                     {
                         var data = new byte[stream.Length];
@@ -1112,15 +1588,21 @@ namespace Universal_Updater
 
         static bool IsDependenciesInstalled(string dependency)
         {
-            RegistryKey Key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Classes\Installer\Dependencies");
-            foreach (string subKeyName in Key.GetSubKeyNames())
+            using (RegistryKey Key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Classes\Installer\Dependencies"))
             {
-                RegistryKey SubKey = Key.OpenSubKey(subKeyName);
-                if (SubKey.GetValue("DisplayName") != null)
+                if (Key == null)
+                    return false;
+
+                foreach (string subKeyName in Key.GetSubKeyNames())
                 {
-                    if (SubKey.GetValue("DisplayName").ToString().IndexOf(dependency, StringComparison.OrdinalIgnoreCase) >= 0)
+                    using (RegistryKey SubKey = Key.OpenSubKey(subKeyName))
                     {
-                        return true;
+                        var displayName = SubKey?.GetValue("DisplayName")?.ToString();
+                        if (!string.IsNullOrEmpty(displayName) &&
+                            displayName.IndexOf(dependency, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -1129,19 +1611,52 @@ namespace Universal_Updater
 
         static bool IsInternetConnected()
         {
-            string host = "www.google.com";
-            bool result = false;
-            Ping p = new Ping();
-            try
+            if (!NetworkInterface.GetIsNetworkAvailable())
+                return false;
+
+            using (var p = new Ping())
             {
-                PingReply reply = p.Send(host, 3000);
-                if (reply.Status == IPStatus.Success)
+                try
                 {
-                    return true;
+                    PingReply reply = p.Send("www.google.com", 2500);
+                    if (reply != null && reply.Status == IPStatus.Success)
+                    {
+                        return true;
+                    }
                 }
+                catch { }
             }
-            catch { }
-            return result;
+
+            // Fallback to lightweight HTTP check in case ICMP is blocked by a firewall/ISP
+            string[] probeUrls = new[]
+            {
+                "http://www.msftconnecttest.com/connecttest.txt",
+                "http://download.windowsupdate.com/"
+            };
+            foreach (var probeUrl in probeUrls)
+            {
+                try
+                {
+                    var req = (HttpWebRequest)WebRequest.Create(probeUrl);
+                    req.Method = "HEAD";
+                    req.Timeout = 4000;
+                    req.AllowAutoRedirect = true;
+                    using (var resp = (HttpWebResponse)req.GetResponse())
+                    {
+                        return true;
+                    }
+                }
+                catch (WebException wex)
+                {
+                    if (wex.Response != null)
+                    {
+                        wex.Response.Close();
+                        return true;
+                    }
+                }
+                catch { }
+            }
+            return false;
         }
 
         static string CalculateMD5(string filePath)
@@ -1177,6 +1692,19 @@ namespace Universal_Updater
             return false;
         }
 
+        public static char NormalizeNumberKey(ConsoleKeyInfo keyInfo)
+        {
+            if (keyInfo.Key >= ConsoleKey.D0 && keyInfo.Key <= ConsoleKey.D9)
+            {
+                return (char)('0' + (keyInfo.Key - ConsoleKey.D0));
+            }
+            if (keyInfo.Key >= ConsoleKey.NumPad0 && keyInfo.Key <= ConsoleKey.NumPad9)
+            {
+                return (char)('0' + (keyInfo.Key - ConsoleKey.NumPad0));
+            }
+            return keyInfo.KeyChar;
+        }
+
         public static void LoadUpdateRules(string customPath = null)
         {
             var defaultPath = $@"{Environment.CurrentDirectory}\{toolsDirectory}";
@@ -1193,7 +1721,7 @@ namespace Universal_Updater
                     var data = File.ReadAllText(rulesFile);
                     if (!string.IsNullOrEmpty(data))
                     {
-                        updateRules = JsonConvert.DeserializeObject<UpdateRules>(data);
+                        updateRules = JsonConvert.DeserializeObject<UpdateRules>(data) ?? new UpdateRules();
                     }
                     else
                     {
@@ -1207,7 +1735,7 @@ namespace Universal_Updater
             }
             else
             {
-                appendLog($"[RULES] rules file not exists at: ${rulesFile}\n");
+                appendLog($"[RULES] rules file not exists at: {rulesFile}\n");
             }
         }
     }
@@ -1234,11 +1762,16 @@ namespace Universal_Updater
 
         public void UpdatePresentState(string[] folderFiles)
         {
+            ShouldPresent = false;
+            if (FeaturePackages == null || folderFiles == null)
+                return;
+
             foreach (var testFeatureCab in FeaturePackages)
             {
-                if (string.Join("\n", folderFiles).IndexOf(testFeatureCab.PackageName, StringComparison.OrdinalIgnoreCase) >= 0)
+                if (folderFiles.Any(file => DownloadPackages.MatchesPackageFeatureName(file, testFeatureCab.PackageName)))
                 {
                     ShouldPresent = true;
+                    break;
                 }
             }
         }

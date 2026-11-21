@@ -36,29 +36,48 @@ using System.Text;
 
 namespace Universal_Updater
 {
-    public class OutputCapture : TextWriter, IDisposable
+    public class OutputCapture : TextWriter
     {
-        private TextWriter stdOutWriter;
+        private readonly TextWriter stdOutWriter;
+        private readonly object _writeLock = new object();
         public static TextWriter Captured { get; private set; }
-        public override Encoding Encoding { get { return Encoding.ASCII; } }
+        public override Encoding Encoding { get { return stdOutWriter != null ? stdOutWriter.Encoding : Encoding.UTF8; } }
 
         public OutputCapture()
         {
             this.stdOutWriter = Console.Out;
             Console.SetOut(this);
-            Captured = new StringWriter();
+            Captured = TextWriter.Synchronized(new StringWriter());
+        }
+
+        public override void Write(char value)
+        {
+            lock (_writeLock)
+            {
+                Captured.Write(value);
+                stdOutWriter.Write(value);
+            }
         }
 
         override public void Write(string output)
         {
-            Captured.Write(output);
-            stdOutWriter.Write(output);
+            if (output == null)
+                return;
+
+            lock (_writeLock)
+            {
+                Captured.Write(output);
+                stdOutWriter.Write(output);
+            }
         }
 
         override public void WriteLine(string output)
         {
-            Captured.WriteLine(output);
-            stdOutWriter.WriteLine(output);
+            lock (_writeLock)
+            {
+                Captured.WriteLine(output);
+                stdOutWriter.WriteLine(output);
+            }
         }
     }
 }

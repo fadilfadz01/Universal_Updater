@@ -40,25 +40,39 @@ using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Universal_Updater
 {
+    internal enum PackageKind
+    {
+        Unknown = 0,
+        CbsCanonical = 1,
+        CbsUpdate = 2,
+        CbsRemoval = 3,
+        SpkgCanonical = 4,
+        SpkgRemoval = 5,
+        PlainCab = 6
+    }
+
     class DownloadPackages
     {
         static Tuple<DateTime, long, long> DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.MinValue, 0, 0);
         public static string[] installedPackages = new string[] { };
-        static List<string> filteredPackages = new List<string>();
+        public static List<string> filteredPackages = new List<string>();
         static bool isFeatureInstalled = false;
         static bool filterCBSPackagesOnly = false;
         static readonly string[] knownPackages = { "ms_commsenhancementglobal.mainos", "ms_commsmessagingglobal.mainos", "microsoftphonefm.platformmanifest.efiesp", "microsoftphonefm.platformmanifest.mainos", "microsoftphonefm.platformmanifest.updateos", "UserInstallableFM.PlatformManifest" };
         public static FFUEntry FFUMountData = null;
         static readonly string[] skippedPackages = { };
-        static readonly string[] packageCBSExtension = { ".cab", ".cbs_", "cbs." };
-        static readonly string[] packageCBSExtensionRemoval = { ".cbsr", "cbsr." };
+        static readonly string[] packageCBSExtension = { ".cab", ".cbs_", "cbs.", ".cbsu_", "cbsu." };
+        static readonly string[] packageCBSExtensionRemoval = { ".cbsr_", ".cbsr", "cbsr." };
         static readonly string[] packageSPKGExtension = { ".spkg", ".spkg_", "spkg." };
-        static readonly string[] packageSPKGExtensionRemoval = { ".spkr", "spkr." };
+        static readonly string[] packageSPKGExtensionRemoval = { ".spkr_", ".spkr", "spkr." };
         static Uri downloadFile;
+        static string _currentDownloadName = string.Empty;
+        static long _currentTotalBytes = -1;
 
         public static string[] getExtensionsList()
         {
@@ -69,31 +83,348 @@ namespace Universal_Updater
             return packageCBSExtension.Concat(packageCBSExtensionRemoval).ToArray();
         }
 
-        public static bool OnlineUpdate(string updateBuild)
+        internal static string GetPackageFileName(string pathOrUrl)
         {
-            // For pre-built in packages currently check for both CBS or SPKG,
-            // those suppose to be sorted already for SPGK or CBS
-            var cbsList = packageCBSExtension.Concat(packageCBSExtensionRemoval).ToArray();
-            var spkgList = packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
-            var targetExtensionList = cbsList.Concat(spkgList).ToArray();
+            if (string.IsNullOrWhiteSpace(pathOrUrl))
+                return string.Empty;
 
-            // Get file content only once
-            var targetListFile = Program.GetResourceFile($"{updateBuild}.txt").Split('\n');
-            Program.appendLog("\n[INSTALLED PACKAGES]\n");
-            for (int i = 1; i < installedPackages.Length; i++)
+            string clean = pathOrUrl.Trim();
+            int queryIdx = clean.IndexOf('?');
+            if (queryIdx >= 0)
+                clean = clean.Substring(0, queryIdx);
+
+            int slashIdx = clean.LastIndexOfAny(new[] { '/', '\\' });
+            return slashIdx >= 0 ? clean.Substring(slashIdx + 1) : clean;
+        }
+
+        private static bool IsHexString(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return false;
+            for (int i = 0; i < value.Length; i++)
             {
-                for (int j = 0; j < targetExtensionList.Length; j++)
+                char c = value[i];
+                bool isHex = (c >= '0' && c <= '9') ||
+                             (c >= 'a' && c <= 'f') ||
+                             (c >= 'A' && c <= 'F');
+                if (!isHex)
+                    return false;
+            }
+            return true;
+        }
+
+        internal static bool TryParsePackageFile(string pathOrUrl, out string fileName, out string packageStem, out PackageKind kind)
+        {
+            fileName = GetPackageFileName(pathOrUrl);
+            packageStem = string.Empty;
+            kind = PackageKind.Unknown;
+
+            if (string.IsNullOrEmpty(fileName))
+                return false;
+
+            if (fileName.EndsWith(".cab", StringComparison.OrdinalIgnoreCase))
+            {
+                string body = fileName.Substring(0, fileName.Length - 4);
+                int underscoreIdx = body.LastIndexOf('_');
+                if (underscoreIdx > 0)
                 {
-                    var requiredPackages = targetListFile.Where(k => k.IndexOf(installedPackages[i].Split(',')[1] + targetExtensionList[j], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                    if (requiredPackages != null)
+                    string beforeHash = body.Substring(0, underscoreIdx);
+                    string hashPart = body.Substring(underscoreIdx + 1);
+                    if (hashPart.Length >= 8 && IsHexString(hashPart))
                     {
-                        if (requiredPackages.IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0 || requiredPackages.IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
+                        if (TryStripMarkerSuffix(beforeHash, out packageStem, out kind))
+                            return true;
+                    }
+                }
+
+                if (TryStripMarkerSuffix(body, out packageStem, out kind))
+                    return true;
+
+                packageStem = body;
+                kind = PackageKind.PlainCab;
+                return true;
+            }
+
+            if (fileName.EndsWith(".spkg", StringComparison.OrdinalIgnoreCase))
+            {
+                packageStem = fileName.Substring(0, fileName.Length - 5);
+                kind = PackageKind.SpkgCanonical;
+                return true;
+            }
+
+            if (fileName.EndsWith(".spkr", StringComparison.OrdinalIgnoreCase))
+            {
+                packageStem = fileName.Substring(0, fileName.Length - 5);
+                kind = PackageKind.SpkgRemoval;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryStripMarkerSuffix(string body, out string packageStem, out PackageKind kind)
+        {
+            if (body.EndsWith(".cbs", StringComparison.OrdinalIgnoreCase))
+            {
+                packageStem = body.Substring(0, body.Length - 4);
+                kind = PackageKind.CbsCanonical;
+                return true;
+            }
+            if (body.EndsWith(".cbsu", StringComparison.OrdinalIgnoreCase))
+            {
+                packageStem = body.Substring(0, body.Length - 5);
+                kind = PackageKind.CbsUpdate;
+                return true;
+            }
+            if (body.EndsWith(".cbsr", StringComparison.OrdinalIgnoreCase))
+            {
+                packageStem = body.Substring(0, body.Length - 5);
+                kind = PackageKind.CbsRemoval;
+                return true;
+            }
+            if (body.EndsWith(".spkg", StringComparison.OrdinalIgnoreCase))
+            {
+                packageStem = body.Substring(0, body.Length - 5);
+                kind = PackageKind.SpkgCanonical;
+                return true;
+            }
+            if (body.EndsWith(".spkr", StringComparison.OrdinalIgnoreCase))
+            {
+                packageStem = body.Substring(0, body.Length - 5);
+                kind = PackageKind.SpkgRemoval;
+                return true;
+            }
+
+            packageStem = string.Empty;
+            kind = PackageKind.Unknown;
+            return false;
+        }
+
+        private static bool IsCbsFamilyKind(PackageKind kind)
+        {
+            return kind == PackageKind.CbsCanonical || kind == PackageKind.CbsUpdate || kind == PackageKind.CbsRemoval || kind == PackageKind.PlainCab;
+        }
+
+        private static bool IsSpkgFamilyKind(PackageKind kind)
+        {
+            return kind == PackageKind.SpkgCanonical || kind == PackageKind.SpkgRemoval;
+        }
+
+        private static bool IsRemovalKind(PackageKind kind)
+        {
+            return kind == PackageKind.CbsRemoval || kind == PackageKind.SpkgRemoval;
+        }
+
+        private static int GetPackageKindPriority(PackageKind kind)
+        {
+            // Prefer canonical base package over differential .cbsu update when both exist in a manifest/folder.
+            switch (kind)
+            {
+                case PackageKind.CbsCanonical:
+                case PackageKind.SpkgCanonical:
+                    return 0;
+                case PackageKind.PlainCab:
+                    return 1;
+                case PackageKind.CbsRemoval:
+                case PackageKind.SpkgRemoval:
+                    return 2;
+                case PackageKind.CbsUpdate:
+                    return 3;
+                default:
+                    return 99;
+            }
+        }
+
+        internal static string ExtractPackageNameFromCsvOrLine(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                return null;
+
+            string trimmed = line.Trim();
+            if (trimmed.IndexOf(',') >= 0)
+            {
+                var parts = trimmed.Split(',');
+                if (parts.Length < 2)
+                    return null;
+                string part = parts[1].Trim().Trim('"');
+                if (string.IsNullOrEmpty(part) ||
+                    part.Equals("Name", StringComparison.OrdinalIgnoreCase) ||
+                    part.Equals("PackageName", StringComparison.OrdinalIgnoreCase))
+                {
+                    return null;
+                }
+                return part;
+            }
+
+            return trimmed.Trim('"');
+        }
+
+        private static bool StemMatchesTarget(string stem, string targetName, bool allowSegmentMatch)
+        {
+            if (string.IsNullOrEmpty(stem) || string.IsNullOrEmpty(targetName))
+                return false;
+            if (stem.Equals(targetName, StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (!allowSegmentMatch)
+                return false;
+            return stem.EndsWith("." + targetName, StringComparison.OrdinalIgnoreCase) ||
+                   stem.StartsWith(targetName + ".", StringComparison.OrdinalIgnoreCase) ||
+                   stem.IndexOf("." + targetName + ".", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        internal static bool MatchesPackageFeatureName(string pathOrFileName, string featurePackageName)
+        {
+            if (string.IsNullOrWhiteSpace(featurePackageName))
+                return false;
+            if (!TryParsePackageFile(pathOrFileName, out _, out string stem, out PackageKind kind))
+                return false;
+
+            string target = featurePackageName.Trim();
+            if (target.EndsWith(".cab", StringComparison.OrdinalIgnoreCase))
+                target = target.Substring(0, target.Length - 4);
+
+            if (target.EndsWith(".cbsr", StringComparison.OrdinalIgnoreCase))
+            {
+                if (kind != PackageKind.CbsRemoval)
+                    return false;
+                return StemMatchesTarget(stem, target.Substring(0, target.Length - 5), true);
+            }
+            if (target.EndsWith(".spkr", StringComparison.OrdinalIgnoreCase))
+            {
+                if (kind != PackageKind.SpkgRemoval)
+                    return false;
+                return StemMatchesTarget(stem, target.Substring(0, target.Length - 5), true);
+            }
+            if (target.EndsWith(".cbsu", StringComparison.OrdinalIgnoreCase))
+            {
+                if (kind != PackageKind.CbsUpdate)
+                    return false;
+                return StemMatchesTarget(stem, target.Substring(0, target.Length - 5), true);
+            }
+            if (target.EndsWith(".cbs", StringComparison.OrdinalIgnoreCase))
+            {
+                if (kind != PackageKind.CbsCanonical)
+                    return false;
+                return StemMatchesTarget(stem, target.Substring(0, target.Length - 4), true);
+            }
+            if (target.EndsWith(".spkg", StringComparison.OrdinalIgnoreCase))
+            {
+                if (kind != PackageKind.SpkgCanonical)
+                    return false;
+                return StemMatchesTarget(stem, target.Substring(0, target.Length - 5), true);
+            }
+
+            return StemMatchesTarget(stem, target, true);
+        }
+
+        private static bool FilteredListHasStem(string stem)
+        {
+            foreach (var item in filteredPackages)
+            {
+                if (TryParsePackageFile(item, out _, out string existingStem, out _))
+                {
+                    if (existingStem.Equals(stem, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private static string FindBestPackageMatch(IEnumerable<string> candidates, string targetName, bool allowSuffixMatch, bool? requireCbsMode = null)
+        {
+            string bestEntry = null;
+            int bestPriority = int.MaxValue;
+
+            foreach (var candidate in candidates)
+            {
+                if (!TryParsePackageFile(candidate, out _, out string stem, out PackageKind kind))
+                    continue;
+                if (requireCbsMode.HasValue)
+                {
+                    if (requireCbsMode.Value && !IsCbsFamilyKind(kind))
+                        continue;
+                    if (!requireCbsMode.Value && !IsSpkgFamilyKind(kind))
+                        continue;
+                }
+                if (!StemMatchesTarget(stem, targetName, allowSuffixMatch))
+                    continue;
+
+                int priority = GetPackageKindPriority(kind);
+                if (priority < bestPriority)
+                {
+                    bestPriority = priority;
+                    bestEntry = candidate;
+                    if (bestPriority == 0)
+                        break;
+                }
+            }
+
+            return bestEntry;
+        }
+
+        public static bool OnlineUpdate(string updateBuild, bool includeAllPackages = false)
+        {
+            filteredPackages.Clear();
+            isFeatureInstalled = false;
+
+            var manifestContent = Program.GetResourceFile($"{updateBuild}.txt");
+            if (string.IsNullOrWhiteSpace(manifestContent))
+            {
+                Program.WriteLine($"Manifest for build '{updateBuild}' is empty or missing!", ConsoleColor.Red);
+                return false;
+            }
+
+            var targetListFile = manifestContent
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0)
+                .ToArray();
+
+            if (includeAllPackages)
+            {
+                var bestByStem = new Dictionary<string, Tuple<int, string>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var entry in targetListFile)
+                {
+                    if (!TryParsePackageFile(entry, out _, out string stem, out PackageKind kind))
+                        continue;
+                    int priority = GetPackageKindPriority(kind);
+                    if (!bestByStem.TryGetValue(stem, out var existing) || priority < existing.Item1)
+                    {
+                        bestByStem[stem] = Tuple.Create(priority, entry);
+                    }
+                }
+
+                foreach (var item in bestByStem.Values)
+                {
+                    var url = item.Item2;
+                    if (url.IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0 || url.IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        isFeatureInstalled = true;
+                    }
+                    if (!shouldSkip(url, true))
+                    {
+                        filteredPackages.Add(url);
+                    }
+                }
+                return isFeatureInstalled;
+            }
+
+            Program.appendLog("\n[INSTALLED PACKAGES]\n");
+            for (int i = 0; i < installedPackages.Length; i++)
+            {
+                string pkgName = ExtractPackageNameFromCsvOrLine(installedPackages[i]);
+                if (!string.IsNullOrEmpty(pkgName))
+                {
+                    var requiredPackage = FindBestPackageMatch(targetListFile, pkgName, false);
+                    if (requiredPackage != null)
+                    {
+                        if (requiredPackage.IndexOf("ms_projecta.mainos", StringComparison.OrdinalIgnoreCase) >= 0 || requiredPackage.IndexOf("MS_RCS_FEATURE_PACK.MainOS.cbsr", StringComparison.OrdinalIgnoreCase) >= 0)
                         {
                             isFeatureInstalled = true;
                         }
-                        if (!shouldSkip(requiredPackages, true))
+                        if (!shouldSkip(requiredPackage, true))
                         {
-                            filteredPackages.Add(requiredPackages);
+                            filteredPackages.Add(requiredPackage);
                         }
                     }
                 }
@@ -101,9 +432,10 @@ namespace Universal_Updater
             }
             for (int i = 0; i < knownPackages.Length; i++)
             {
-                if (string.Join("\n", filteredPackages).IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) < 0)
+                if (!FilteredListHasStem(knownPackages[i]) &&
+                    !filteredPackages.Any(p => TryParsePackageFile(p, out _, out string s, out _) && StemMatchesTarget(s, knownPackages[i], true)))
                 {
-                    var knownPackage = targetListFile.Where(j => j.IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
+                    var knownPackage = FindBestPackageMatch(targetListFile, knownPackages[i], true);
                     if (knownPackage != null)
                     {
                         if (!shouldSkip(knownPackage, true))
@@ -116,27 +448,48 @@ namespace Universal_Updater
             return isFeatureInstalled;
         }
 
+        internal static bool IncludeFeatureFromManifest(string updateBuild, string targetName)
+        {
+            var manifestContent = Program.GetResourceFile($"{updateBuild}.txt");
+            if (string.IsNullOrWhiteSpace(manifestContent))
+                return false;
+
+            var targetListFile = manifestContent
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0)
+                .ToArray();
+
+            var match = FindBestPackageMatch(targetListFile, targetName, true);
+            if (match != null && !shouldSkip(match, true))
+            {
+                filteredPackages.Add(match);
+                return true;
+            }
+            return false;
+        }
+
         public static async Task<bool> OfflineUpdate(string[] folderFiles)
         {
-            var cbsList = packageCBSExtension.Concat(packageCBSExtensionRemoval).ToArray();
-            var spkgList = packageSPKGExtension.Concat(packageSPKGExtensionRemoval).ToArray();
-
         filterPackages:
             int totalRemovalPackages = 0;
             Program.LoadUpdateRules(Program.packagePath);
             filteredPackages.Clear();
-            var folderHasCBS = false;
+            var folderHasExplicitCBS = false;
+            var folderHasPlainCab = false;
             var folderHasSPKG = false;
-            var testCBSPackages = folderFiles.Where(k => k.ContainsAny(cbsList) && !k.ContainsAny(spkgList)).FirstOrDefault();
-            if (testCBSPackages != null)
+            foreach (var file in folderFiles)
             {
-                folderHasCBS = true;
+                if (!TryParsePackageFile(file, out _, out _, out PackageKind kind))
+                    continue;
+                if (kind == PackageKind.CbsCanonical || kind == PackageKind.CbsUpdate || kind == PackageKind.CbsRemoval)
+                    folderHasExplicitCBS = true;
+                else if (kind == PackageKind.PlainCab)
+                    folderHasPlainCab = true;
+                else if (IsSpkgFamilyKind(kind))
+                    folderHasSPKG = true;
             }
-            var testSPKGPackages = folderFiles.Where(k => k.ContainsAny(spkgList)).FirstOrDefault();
-            if (testSPKGPackages != null)
-            {
-                folderHasSPKG = true;
-            }
+            var folderHasCBS = folderHasExplicitCBS || folderHasPlainCab;
 
             // We show this question only if folder has mixed packages
             if (folderHasCBS && folderHasSPKG)
@@ -186,7 +539,6 @@ namespace Universal_Updater
                 Program.appendLog("Always filter file detected, forcing packages filter\n");
             }
 
-            var targetExtensionList = getExtensionsList();
             var previewType = "cbs";
             if (!filterCBSPackagesOnly)
             {
@@ -246,21 +598,13 @@ namespace Universal_Updater
                 Program.appendLog("\n[INSTALLED PACKAGES]\n");
                 for (int i = 0; i < installedPackages.Length; i++)
                 {
-                    for (int j = 0; j < targetExtensionList.Length; j++)
+                    string pkgName = ExtractPackageNameFromCsvOrLine(installedPackages[i]);
+                    if (!string.IsNullOrEmpty(pkgName))
                     {
-                        // Packages fetched from device info has `,`, from FFU usually clean
-                        var checkName = installedPackages[i] + targetExtensionList[j];
-                        if (checkName.IndexOf(",") >= 0)
+                        var requiredPackage = FindBestPackageMatch(folderFiles, pkgName, false, filterCBSPackagesOnly);
+                        if (requiredPackage != null && !shouldSkip(requiredPackage))
                         {
-                            checkName = installedPackages[i].Split(',')[1] + targetExtensionList[j];
-                        }
-                        var requiredPackages = folderFiles.Where(k => k.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                        if (requiredPackages != null)
-                        {
-                            if (!shouldSkip(requiredPackages))
-                            {
-                                filteredPackages.Add(requiredPackages);
-                            }
+                            filteredPackages.Add(requiredPackage);
                         }
                     }
                     Program.appendLog($"{installedPackages[i]}\n");
@@ -268,32 +612,12 @@ namespace Universal_Updater
 
                 for (int i = 0; i < knownPackages.Length; i++)
                 {
-                    if (string.Join("\n", filteredPackages).IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) < 0)
+                    if (!filteredPackages.Any(p => TryParsePackageFile(p, out _, out string s, out _) && StemMatchesTarget(s, knownPackages[i], true)))
                     {
-                        var knownPackage = folderFiles.Where(j => j.IndexOf(knownPackages[i], StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                        if (knownPackage != null)
+                        var knownPackage = FindBestPackageMatch(folderFiles, knownPackages[i], true, filterCBSPackagesOnly);
+                        if (knownPackage != null && !shouldSkip(knownPackage))
                         {
-                            bool skipThisPackage = false;
-                            if (filterCBSPackagesOnly)
-                            {
-                                if (knownPackage.ContainsAny(spkgList))
-                                {
-                                    skipThisPackage = true;
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                if (!knownPackage.ContainsAny(spkgList))
-                                {
-                                    skipThisPackage = true;
-                                    break;
-                                }
-                            }
-                            if (!skipThisPackage && !shouldSkip(knownPackage))
-                            {
-                                filteredPackages.Add(knownPackage);
-                            }
+                            filteredPackages.Add(knownPackage);
                         }
                     }
                 }
@@ -301,35 +625,28 @@ namespace Universal_Updater
             else
             {
                 Program.WriteLine($"\nAdding packages (type: {previewType}), please wait...", ConsoleColor.DarkGray);
-                for (int j = 0; j < targetExtensionList.Length; j++)
+                var bestByStem = new Dictionary<string, Tuple<int, string>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var candidate in folderFiles)
                 {
-                    var requiredPackages = folderFiles.Where(k => k.IndexOf(targetExtensionList[j], StringComparison.OrdinalIgnoreCase) >= 0);
-                    if (requiredPackages != null)
+                    if (!TryParsePackageFile(candidate, out _, out string stem, out PackageKind kind))
+                        continue;
+                    if (filterCBSPackagesOnly && !IsCbsFamilyKind(kind))
+                        continue;
+                    if (!filterCBSPackagesOnly && !IsSpkgFamilyKind(kind))
+                        continue;
+
+                    int priority = GetPackageKindPriority(kind);
+                    if (!bestByStem.TryGetValue(stem, out var existing) || priority < existing.Item1)
                     {
-                        foreach (var requiredPackage in requiredPackages)
-                        {
-                            bool skipThisPackage = false;
-                            if (filterCBSPackagesOnly)
-                            {
-                                if (requiredPackage.ContainsAny(spkgList))
-                                {
-                                    skipThisPackage = true;
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                if (!requiredPackage.ContainsAny(spkgList))
-                                {
-                                    skipThisPackage = true;
-                                    break;
-                                }
-                            }
-                            if (!skipThisPackage && !shouldSkip(requiredPackage))
-                            {
-                                filteredPackages.Add(requiredPackage);
-                            }
-                        }
+                        bestByStem[stem] = Tuple.Create(priority, candidate);
+                    }
+                }
+
+                foreach (var entry in bestByStem.Values)
+                {
+                    if (!shouldSkip(entry.Item2))
+                    {
+                        filteredPackages.Add(entry.Item2);
                     }
                 }
             }
@@ -343,36 +660,53 @@ namespace Universal_Updater
                     {
                         for (int i = 0; i < feature.FeaturePackages.Length; i++)
                         {
-                            var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                            if (requiredPackages != null)
+                            var matchingFeatureFiles = folderFiles
+                                .Where(j => MatchesPackageFeatureName(j, feature.FeaturePackages[i].PackageName))
+                                .ToList();
+
+                            var requiredPackage = FindBestPackageMatch(
+                                matchingFeatureFiles,
+                                feature.FeaturePackages[i].PackageName.EndsWith(".cab", StringComparison.OrdinalIgnoreCase)
+                                    ? feature.FeaturePackages[i].PackageName.Substring(0, feature.FeaturePackages[i].PackageName.Length - 4)
+                                    : feature.FeaturePackages[i].PackageName,
+                                true);
+
+                            if (requiredPackage == null && matchingFeatureFiles.Count > 0)
+                            {
+                                requiredPackage = matchingFeatureFiles[0];
+                            }
+
+                            if (requiredPackage != null)
                             {
                                 if (feature.FeaturePackages[i].ReplaceStock)
                                 {
-                                    // Ensure to remove stock on from the list
+                                    // Ensure to remove stock one from the list
                                     var stockName = feature.FeaturePackages[i].TargetStockName;
-                                    for (int j = 0; j < targetExtensionList.Length; j++)
+                                    bool removedAny = false;
+                                    for (int idx = filteredPackages.Count - 1; idx >= 0; idx--)
                                     {
-                                        var checkName = stockName + targetExtensionList[j];
-                                        var packageRemoval = folderFiles.Where(a => a.IndexOf(checkName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                                        if (packageRemoval != null)
+                                        if (TryParsePackageFile(filteredPackages[idx], out _, out string stem, out _) &&
+                                            StemMatchesTarget(stem, stockName, false))
                                         {
-                                            if (filteredPackages.Remove(packageRemoval))
-                                            {
-                                                Program.WriteLine($"Stock ({stockName}) replaced with feature", ConsoleColor.DarkYellow);
-                                                Program.appendLog($"Package ({stockName}) replaced with feature ({feature.FeaturePackages[i].PackageName})\n");
-                                            }
-                                            else
-                                            {
-                                                Program.WriteLine($"Stock ({stockName}) is not presented in filtered list!", ConsoleColor.DarkYellow);
-                                            }
+                                            filteredPackages.RemoveAt(idx);
+                                            removedAny = true;
                                         }
+                                    }
+                                    if (removedAny)
+                                    {
+                                        Program.WriteLine($"Stock ({stockName}) replaced with feature", ConsoleColor.DarkYellow);
+                                        Program.appendLog($"Package ({stockName}) replaced with feature ({feature.FeaturePackages[i].PackageName})\n");
+                                    }
+                                    else
+                                    {
+                                        Program.WriteLine($"Stock ({stockName}) is not presented in filtered list!", ConsoleColor.DarkYellow);
                                     }
                                 }
 
-                                if (!shouldSkip(requiredPackages))
+                                if (!shouldSkip(requiredPackage))
                                 {
-                                    filteredPackages.Add(requiredPackages);
-                                    Program.appendLog($"Feature Package ({requiredPackages}) added to filtered list\n");
+                                    filteredPackages.Add(requiredPackage);
+                                    Program.appendLog($"Feature Package ({requiredPackage}) added to filtered list\n");
                                 }
                             }
                         }
@@ -382,11 +716,7 @@ namespace Universal_Updater
                         // Ensure package removed from the list
                         for (int i = 0; i < feature.FeaturePackages.Length; i++)
                         {
-                            var requiredPackages = folderFiles.Where(j => j.IndexOf(feature.FeaturePackages[i].PackageName, StringComparison.OrdinalIgnoreCase) >= 0).FirstOrDefault();
-                            if (requiredPackages != null)
-                            {
-                                filteredPackages.Remove(requiredPackages);
-                            }
+                            filteredPackages.RemoveAll(p => MatchesPackageFeatureName(p, feature.FeaturePackages[i].PackageName));
                         }
                     }
                 }
@@ -420,7 +750,7 @@ namespace Universal_Updater
 
                     var startData = certificateDate.ToDate(ref dtFmt);
                     var expireData = certificateExpireDate.ToDate(ref dtFmt);
-                    if (startData != null && startData.HasValue)
+                    if (startData != null && startData.HasValue && expireData != null && expireData.HasValue)
                     {
                         Program.Write(startData.Value.ToString("d"), ConsoleColor.DarkGray);
                         Program.Write(" - ", ConsoleColor.DarkGray);
@@ -450,7 +780,7 @@ namespace Universal_Updater
                         Program.WriteLine(" (Please double check)", ConsoleColor.DarkGray);
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                 }
 
@@ -474,7 +804,7 @@ namespace Universal_Updater
                         break;
                     }
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                 }
 
@@ -482,7 +812,6 @@ namespace Universal_Updater
                 {
                     var dateOnly = formatedDate.Value.Date;
                     Program.Write("Files  : " + dateOnly.ToString("d"), ConsoleColor.DarkGray);
-                    var datePlusTwoDays = dateOnly.AddDays(2);
                     Program.WriteLine($" ({dtFmt})", ConsoleColor.DarkGray);
                     if (!Program.pushToFFU)
                     {
@@ -513,30 +842,15 @@ namespace Universal_Updater
                 try
                 {
                     // Count removal packages 
-                    if (filterCBSPackagesOnly)
+                    var removals = filteredPackages.Where(k =>
+                        TryParsePackageFile(k, out _, out _, out PackageKind kind) && IsRemovalKind(kind)).ToList();
+                    totalRemovalPackages = removals.Count;
+                    if (totalRemovalPackages > 0)
                     {
-                        var cbsRemovals = filteredPackages.Where(k => k.ContainsAny(packageCBSExtensionRemoval));
-                        if (cbsRemovals != null)
+                        Program.appendLog(filterCBSPackagesOnly ? "\n[REMOVALS CBS]\n" : "\n[REMOVALS SPKG]\n");
+                        foreach (var removalItem in removals)
                         {
-                            totalRemovalPackages = cbsRemovals.Count();
-                            Program.appendLog("\n[REMOVALS CBS]\n");
-                            foreach (var cbsRemovalItem in cbsRemovals)
-                            {
-                                Program.appendLog($"{cbsRemovalItem}\n");
-                            }
-                        }
-                    }
-                    else
-                    {
-                        var spkgRemovals = filteredPackages.Where(k => k.ContainsAny(packageSPKGExtensionRemoval));
-                        if (spkgRemovals != null)
-                        {
-                            totalRemovalPackages = spkgRemovals.Count();
-                            Program.appendLog("\n[REMOVALS SPKG]\n");
-                            foreach (var spkgRemovalItem in spkgRemovals)
-                            {
-                                Program.appendLog($"{spkgRemovalItem}\n");
-                            }
+                            Program.appendLog($"{removalItem}\n");
                         }
                     }
                 }
@@ -567,11 +881,20 @@ namespace Universal_Updater
                 if (packagesAction.KeyChar == '1')
                 {
                     Program.WriteLine("\n[PREPARING]\nPlease wait...", ConsoleColor.DarkYellow);
-                    for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
+                    var destDir = Path.Combine(Program.filteredDirectory, GetDeviceInfo.SerialNumber[0], "Packages");
+                    Directory.CreateDirectory(destDir);
+                    var validPackages = filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).ToList();
+                    for (int i = 0; i < validPackages.Count; i++)
                     {
+                        var srcPath = validPackages[i];
+                        var fileName = Path.GetFileName(srcPath);
+                        var dstPath = Path.Combine(destDir, fileName);
                         Program.resetCursorPosition();
-                        Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {filteredPackages[i].Split('\\').Last()}", ConsoleColor.DarkGray, true);
-                        File.Copy(filteredPackages[i], Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{filteredPackages[i].Split('\\').Last()}", true);
+                        Program.WriteLine($@"[{i + 1}/{validPackages.Count}] {fileName}", ConsoleColor.DarkGray, true);
+                        if (!string.Equals(Path.GetFullPath(srcPath), Path.GetFullPath(dstPath), StringComparison.OrdinalIgnoreCase))
+                        {
+                            File.Copy(srcPath, dstPath, true);
+                        }
                     }
                 }
                 else if (packagesAction.KeyChar == '2')
@@ -611,69 +934,303 @@ namespace Universal_Updater
             return true;
         }
 
-        public static async Task<bool> DownloadUpdate(string update)
+        private static bool HasMscfSignature(string filePath)
         {
-            WebClient client = new WebClient();
-            Process downloadProcess = new Process();
-            downloadProcess.StartInfo.FileName = Program.toolsDirectory + @"\wget.exe";
-            downloadProcess.StartInfo.UseShellExecute = false;
-
-            Program.WriteLine("\n[OUTPUT] (wget.exe)\nPlease wait...", ConsoleColor.DarkYellow);
-            for (int i = 0; i < filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count(); i++)
+            try
             {
-                downloadFile = new Uri(filteredPackages[i]);
-                Program.resetCursorPosition();
-                Program.WriteLine($@"[{i + 1}/{filteredPackages.Where(j => !string.IsNullOrWhiteSpace(j)).Count()}] {downloadFile.LocalPath.Split('/').Last()}", ConsoleColor.DarkGray);
-                if (update == "15254.603")
+                var info = new FileInfo(filePath);
+                if (!info.Exists || info.Length < 4)
+                    return false;
+                using (var fs = File.OpenRead(filePath))
                 {
-                    downloadProcess.StartInfo.Arguments = $@"{downloadFile} --spider";
-                    downloadProcess.StartInfo.RedirectStandardOutput = true;
-                    downloadProcess.StartInfo.RedirectStandardError = true;
-                    downloadProcess.StartInfo.RedirectStandardInput = true;
-                    downloadProcess.Start();
-                    downloadProcess.WaitForExit();
-                    var logOutput = (await downloadProcess.StandardError.ReadToEndAsync()).Split('\n');
-                    var fileSize = Convert.ToInt64(logOutput.Where(j => j.IndexOf("Length:", StringComparison.OrdinalIgnoreCase) >= 0).ToArray()[0].Split(' ')[1]);
-                    do
-                    {
-                        downloadProcess.StartInfo.Arguments = $@"-q -c -P """ + Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages"" {downloadFile} --no-check-certificate --show-progress";
-                        downloadProcess.StartInfo.RedirectStandardOutput = false;
-                        downloadProcess.StartInfo.RedirectStandardError = false;
-                        downloadProcess.StartInfo.RedirectStandardInput = false;
-                        downloadProcess.Start();
-                        Console.Title = "Universal Updater.exe";
-                        downloadProcess.WaitForExit();
-                    }
-                    while (fileSize != new FileInfo(Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}").Length);
+                    byte[] header = new byte[4];
+                    if (fs.Read(header, 0, 4) != 4)
+                        return false;
+                    return header[0] == (byte)'M' && header[1] == (byte)'S' && header[2] == (byte)'C' && header[3] == (byte)'F';
                 }
-                else
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsValidCachedPackage(string path, string fileName, long expectedSize = -1)
+        {
+            if (!File.Exists(path))
+                return false;
+            var info = new FileInfo(path);
+            if (info.Length <= 0)
+                return false;
+            if (expectedSize > 0 && info.Length != expectedSize)
+                return false;
+            if (fileName.EndsWith(".cab", StringComparison.OrdinalIgnoreCase) && !HasMscfSignature(path))
+                return false;
+            return true;
+        }
+
+        private static long ParseWgetContentLength(string stderrText)
+        {
+            if (string.IsNullOrEmpty(stderrText))
+                return -1;
+            foreach (var rawLine in stderrText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (rawLine.IndexOf("Length:", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    var fileStream = client.OpenRead(downloadFile);
-                    var fileSize = Convert.ToInt64(client.ResponseHeaders["Content-Length"]);
-                    fileStream.Close();
-                    do
+                    var match = Regex.Match(rawLine, @"Length:\s*(\d+)", RegexOptions.IgnoreCase);
+                    if (match.Success && long.TryParse(match.Groups[1].Value, out long parsed))
                     {
-                        client.DownloadProgressChanged += DownloadProgressChanged;
-                        await client.DownloadFileTaskAsync(downloadFile, Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}");
-                        Console.Title = "Universal Updater.exe";
+                        return parsed;
                     }
-                    while (fileSize != new FileInfo(Program.filteredDirectory + $@"\{GetDeviceInfo.SerialNumber[0]}\Packages\{downloadFile.LocalPath.Split('/').Last()}").Length);
+                }
+            }
+            return -1;
+        }
+
+        public static async Task<bool> DownloadUpdate(string update, string customDestinationFolder = null)
+        {
+            var validPackages = filteredPackages
+                .Where(j => !string.IsNullOrWhiteSpace(j))
+                .Select(j => j.Trim())
+                .ToList();
+
+            if (validPackages.Count == 0)
+            {
+                Program.WriteLine("\nNo packages matched for download.", ConsoleColor.Red);
+                return false;
+            }
+
+            string destinationDir = customDestinationFolder;
+            if (string.IsNullOrWhiteSpace(destinationDir))
+            {
+                string serialKey = (GetDeviceInfo.SerialNumber != null && GetDeviceInfo.SerialNumber.Length > 0 && !string.IsNullOrWhiteSpace(GetDeviceInfo.SerialNumber[0]))
+                    ? GetDeviceInfo.SerialNumber[0]
+                    : "Downloads";
+                destinationDir = Path.Combine(Program.filteredDirectory, serialKey, "Packages");
+            }
+            string cacheDir = Path.Combine(Environment.CurrentDirectory, "Cache", update);
+            Directory.CreateDirectory(destinationDir);
+            Directory.CreateDirectory(cacheDir);
+
+            const int maxRetries = 3;
+            int cacheHits = 0;
+            int downloadedCount = 0;
+            var failedPackages = new List<string>();
+
+            Program.WriteLine(update == "15254.603" ? "\n[OUTPUT] (wget.exe)\nPlease wait..." : "\n[OUTPUT] (Downloading)\nPlease wait...", ConsoleColor.DarkYellow);
+
+            using (WebClient client = new WebClient())
+            {
+                client.DownloadProgressChanged += DownloadProgressChanged;
+
+                for (int i = 0; i < validPackages.Count; i++)
+                {
+                    downloadFile = new Uri(validPackages[i]);
+                    string fileName = GetPackageFileName(validPackages[i]);
+                    _currentDownloadName = fileName;
+                    _currentTotalBytes = -1;
+
+                    string cacheFile = Path.Combine(cacheDir, fileName);
+                    string partFile = cacheFile + ".part";
+                    string destFile = Path.Combine(destinationDir, fileName);
+
+                    Program.resetCursorPosition();
+                    Program.WriteLine($@"[{i + 1}/{validPackages.Count}] {fileName}", ConsoleColor.DarkGray, true);
+
+                    if (IsValidCachedPackage(cacheFile, fileName))
+                    {
+                        cacheHits++;
+                        if (!string.Equals(Path.GetFullPath(cacheFile), Path.GetFullPath(destFile), StringComparison.OrdinalIgnoreCase))
+                        {
+                            File.Copy(cacheFile, destFile, true);
+                        }
+                        continue;
+                    }
+
+                    bool success = false;
+                    string lastError = string.Empty;
+
+                    for (int attempt = 1; attempt <= maxRetries; attempt++)
+                    {
+                        try
+                        {
+                            if (File.Exists(partFile))
+                                File.Delete(partFile);
+                        }
+                        catch { }
+
+                        if (update == "15254.603")
+                        {
+                            try
+                            {
+                                string wgetUrl = attempt == 1 ? validPackages[i] : (validPackages[i].Contains("?") ? validPackages[i] : validPackages[i] + "?dl=1");
+                                long expectedSize = -1;
+
+                                using (var spiderProc = new Process())
+                                {
+                                    spiderProc.StartInfo.FileName = Path.Combine(Program.toolsDirectory, "wget.exe");
+                                    spiderProc.StartInfo.Arguments = $"--no-hsts --no-check-certificate --spider \"{wgetUrl}\"";
+                                    spiderProc.StartInfo.UseShellExecute = false;
+                                    spiderProc.StartInfo.CreateNoWindow = true;
+                                    spiderProc.StartInfo.RedirectStandardOutput = true;
+                                    spiderProc.StartInfo.RedirectStandardError = true;
+                                    spiderProc.Start();
+                                    var outTask = spiderProc.StandardOutput.ReadToEndAsync();
+                                    var errTask = spiderProc.StandardError.ReadToEndAsync();
+                                    await Task.Run(() => spiderProc.WaitForExit(30000));
+                                    if (!spiderProc.HasExited)
+                                    {
+                                        try { spiderProc.Kill(); } catch { }
+                                    }
+                                    try { await outTask; } catch { }
+                                    string spiderErr = string.Empty;
+                                    try { spiderErr = await errTask; } catch { }
+                                    expectedSize = ParseWgetContentLength(spiderErr);
+                                }
+
+                                using (var dlProc = new Process())
+                                {
+                                    dlProc.StartInfo.FileName = Path.Combine(Program.toolsDirectory, "wget.exe");
+                                    dlProc.StartInfo.Arguments = $"-q --no-hsts -O \"{partFile}\" \"{wgetUrl}\" --no-check-certificate --show-progress";
+                                    dlProc.StartInfo.UseShellExecute = false;
+                                    dlProc.StartInfo.CreateNoWindow = false;
+                                    dlProc.Start();
+                                    await Task.Run(() => dlProc.WaitForExit());
+                                    Program.showTitleWaitMessage(false);
+                                    if (dlProc.ExitCode != 0)
+                                    {
+                                        lastError = $"wget exited with code {dlProc.ExitCode}";
+                                    }
+                                    else if (IsValidCachedPackage(partFile, fileName, expectedSize))
+                                    {
+                                        success = true;
+                                    }
+                                    else
+                                    {
+                                        lastError = "Downloaded file failed size or CAB header verification";
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                lastError = ex.Message;
+                            }
+                        }
+                        else
+                        {
+                            try
+                            {
+                                Volatile.Write(ref _currentTotalBytes, -1);
+                                await client.DownloadFileTaskAsync(downloadFile, partFile);
+                                Program.showTitleWaitMessage(false);
+
+                                long expectedSize = Volatile.Read(ref _currentTotalBytes);
+                                if (expectedSize <= 0 && client.ResponseHeaders != null &&
+                                    long.TryParse(client.ResponseHeaders["Content-Length"], out long headerLen) && headerLen > 0)
+                                {
+                                    expectedSize = headerLen;
+                                }
+
+                                if (IsValidCachedPackage(partFile, fileName, expectedSize))
+                                {
+                                    success = true;
+                                }
+                                else
+                                {
+                                    lastError = "Downloaded file failed size or CAB header verification";
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Program.showTitleWaitMessage(false);
+                                lastError = ex.Message;
+                            }
+                        }
+
+                        if (success)
+                        {
+                            try
+                            {
+                                if (File.Exists(cacheFile))
+                                    File.Delete(cacheFile);
+                                File.Move(partFile, cacheFile);
+                                if (!string.Equals(Path.GetFullPath(cacheFile), Path.GetFullPath(destFile), StringComparison.OrdinalIgnoreCase))
+                                {
+                                    File.Copy(cacheFile, destFile, true);
+                                }
+                                downloadedCount++;
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                success = false;
+                                lastError = ex.Message;
+                            }
+                        }
+
+                        Program.appendLog($"[DOWNLOAD RETRY {attempt}/{maxRetries}] {fileName}: {lastError}\n");
+                        if (attempt < maxRetries)
+                        {
+                            await Task.Delay(1000 * attempt);
+                        }
+                    }
+
+                    if (!success)
+                    {
+                        try
+                        {
+                            if (File.Exists(partFile))
+                                File.Delete(partFile);
+                        }
+                        catch { }
+                        failedPackages.Add($"{fileName} ({lastError})");
+                        Program.WriteLine($"Failed: {fileName} - {lastError}", ConsoleColor.Red);
+                    }
                 }
             }
 
+            Program.showTitleWaitMessage(false);
+            Program.appendLog($"[DOWNLOAD SUMMARY] Total={validPackages.Count}, Cached={cacheHits}, Downloaded={downloadedCount}, Failed={failedPackages.Count}\n");
+
+            if (failedPackages.Count > 0)
+            {
+                Program.WriteLine($"\nDownload finished with {failedPackages.Count} failed package(s). Check the log for details.", ConsoleColor.Red);
+                return false;
+            }
+
+            Program.WriteLine($"\nPackages ready: {validPackages.Count} (cached: {cacheHits}, downloaded: {downloadedCount})", ConsoleColor.Green);
             return true;
         }
 
         private static void DownloadProgressChanged(object sender, DownloadProgressChangedEventArgs downloadProgressChangedEventArgs)
         {
+            if (downloadProgressChangedEventArgs.TotalBytesToReceive > 0)
+            {
+                Volatile.Write(ref _currentTotalBytes, downloadProgressChangedEventArgs.TotalBytesToReceive);
+            }
             DownloadingProgress = new Tuple<DateTime, long, long>(DateTime.Now, downloadProgressChangedEventArgs.TotalBytesToReceive, downloadProgressChangedEventArgs.BytesReceived);
-            Console.Title = $"Universal Updater.exe  [Downloading: {downloadFile.LocalPath.Split('/').Last().Remove(28)}... {((DownloadingProgress.Item3 * 100) / DownloadingProgress.Item2)}% - {DownloadingProgress.Item3}/{DownloadingProgress.Item2}]";
+            string name = _currentDownloadName;
+            if (string.IsNullOrEmpty(name) && downloadFile != null)
+            {
+                name = GetPackageFileName(downloadFile.AbsoluteUri);
+            }
+            string displayName = name.Length > 28 ? name.Substring(0, 28) + "..." : name;
+            long total = DownloadingProgress.Item2;
+            long received = DownloadingProgress.Item3;
+            string progressText = total > 0
+                ? $"{(received * 100) / total}% - {received}/{total}"
+                : $"{received} bytes";
+            try
+            {
+                Console.Title = $"Universal Updater.exe  [Downloading: {displayName} {progressText}]";
+            }
+            catch { }
         }
         public static bool shouldSkip(string package, bool onlinePackage = false)
         {
             foreach (var testCheck in skippedPackages)
             {
-                if (package.IndexOf(testCheck, StringComparison.OrdinalIgnoreCase) > 0)
+                if (package.IndexOf(testCheck, StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     // Package exists in the skip list
                     Program.appendLog($"Package ({package}) skipped!, member of skipped list\n");
@@ -702,7 +1259,7 @@ namespace Universal_Updater
                 }
             }
 
-            if (filteredPackages.Contains(package))
+            if (filteredPackages.Any(p => string.Equals(p, package, StringComparison.OrdinalIgnoreCase)))
             {
                 // Package already added, this happens due to extension and prefix match
                 Program.appendLog($"Package ({package}) skipped!, already exists\n");

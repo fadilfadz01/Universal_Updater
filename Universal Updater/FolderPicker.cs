@@ -114,29 +114,56 @@ namespace Universal_Updater
             return taskCompletionSource.Task;
         }
 
-        public static async Task<string> ShowSelectFolderDialogAsync()
+        public static Task<string> ShowSelectFolderDialogAsync(string promptMessage = "Please select update packages folder.")
         {
             MessageBox.Show(
-            $"Please select update packages folder.",
+            promptMessage,
             $"Select Folder",
             MessageBoxButtons.OK,
             MessageBoxIcon.Information);
 
-            string result = await Task.Run(() =>
+            var tcs = new TaskCompletionSource<string>();
+            Thread staThread = new Thread(() =>
             {
-                var dialog = (IFileOpenDialog)new FileOpenDialog();
-                dialog.SetOptions(FOS.FOS_PICKFOLDERS | FOS.FOS_FORCEFILESYSTEM);
-                if (dialog.Show(IntPtr.Zero) == 0)
+                IFileOpenDialog dialog = null;
+                IShellItem item = null;
+                try
                 {
-                    dialog.GetResult(out IShellItem item);
-                    item.GetDisplayName(SIGDN.SIGDN_FILESYSPATH, out IntPtr ptr);
-                    string path = Marshal.PtrToStringAuto(ptr);
-                    return path;
+                    dialog = (IFileOpenDialog)new FileOpenDialog();
+                    dialog.SetOptions(FOS.FOS_PICKFOLDERS | FOS.FOS_FORCEFILESYSTEM);
+                    if (dialog.Show(IntPtr.Zero) == 0)
+                    {
+                        dialog.GetResult(out item);
+                        if (item != null)
+                        {
+                            item.GetDisplayName(SIGDN.SIGDN_FILESYSPATH, out IntPtr ptr);
+                            if (ptr != IntPtr.Zero)
+                            {
+                                string path = Marshal.PtrToStringAuto(ptr);
+                                Marshal.FreeCoTaskMem(ptr);
+                                tcs.SetResult(path);
+                                return;
+                            }
+                        }
+                    }
+                    tcs.SetResult(null);
                 }
-                return null;
+                catch (Exception ex)
+                {
+                    tcs.SetException(ex);
+                }
+                finally
+                {
+                    if (item != null && Marshal.IsComObject(item))
+                        Marshal.FinalReleaseComObject(item);
+                    if (dialog != null && Marshal.IsComObject(dialog))
+                        Marshal.FinalReleaseComObject(dialog);
+                }
             });
 
-            return result;
+            staThread.SetApartmentState(ApartmentState.STA);
+            staThread.Start();
+            return tcs.Task;
         }
 
         [ComImport]
